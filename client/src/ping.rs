@@ -5,7 +5,7 @@ use common::utils::find_free_tcp_port;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
@@ -17,10 +17,9 @@ pub struct Settings {
     pub sleep_time: u64,
 }
 
-pub async fn start(port: u16) -> Result<broadcast::Sender<()>> {
+pub async fn start(port: u16) -> Result<mpsc::Sender<()>> {
     // Create a channel for stop signal
-    let (stop_tx, _) = broadcast::channel(1);
-    let stop_tx_tcp = stop_tx.clone();
+    let (stop_tx, mut stop_rx) = mpsc::channel(1);
 
     let tcp_addr = format!("localhost:{}", port);
 
@@ -29,8 +28,6 @@ pub async fn start(port: u16) -> Result<broadcast::Sender<()>> {
         info!("Starting TCP ponger on {}", tcp_addr);
         match TcpListener::bind(&tcp_addr).await {
             Ok(acceptor) => {
-                let mut stop_rx = stop_tx_tcp.subscribe();
-
                 tokio::spawn(async move {
                     loop {
                         tokio::select! {
@@ -63,7 +60,7 @@ pub async fn start(port: u16) -> Result<broadcast::Sender<()>> {
     Ok(stop_tx)
 }
 
-pub async fn publish(command_tx: broadcast::Sender<Message>) -> Result<()> {
+pub async fn publish(command_tx: mpsc::Sender<Message>) -> Result<()> {
     let port = find_free_tcp_port()
         .await
         .context("Failed to find free TCP port")?;
@@ -77,7 +74,7 @@ pub async fn publish(command_tx: broadcast::Sender<Message>) -> Result<()> {
     };
 
     info!("Publishing TCP service on port {}", port);
-    command_tx.send(Message::EndpointStart(client))?;
+    command_tx.send(Message::EndpointStart(client)).await?;
     Ok(())
 }
 

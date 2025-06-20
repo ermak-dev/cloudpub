@@ -1,19 +1,106 @@
 use crate::config::{TcpConfig, TransportConfig};
 
-use super::{AddrMaybeCached, SocketOpts, Transport};
+use super::{AddrMaybeCached, ProtobufStream, SocketOpts, Transport};
 use crate::utils::host_port_pair;
 use anyhow::Result;
 use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
 use async_trait::async_trait;
 use socket2::{SockRef, TcpKeepalive};
 #[cfg(unix)]
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::RawFd;
 use std::str::FromStr;
 use std::time::Duration;
-use tokio::net::TcpStream;
 pub use tokio_unix_tcp::{Listener, NamedSocketAddr, SocketAddr, Stream};
+type RawTcpStream = Stream;
+use crate::protocol::v2::message::Message as ProtocolMessage;
+use crate::protocol::v2::{read_message, write_message};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tracing::trace;
 use url::Url;
+
+#[derive(Debug)]
+pub struct TcpStream {
+    inner: RawTcpStream,
+}
+
+impl TcpStream {
+    pub fn new(stream: RawTcpStream) -> Self {
+        Self { inner: stream }
+    }
+
+    pub fn into_inner(self) -> RawTcpStream {
+        self.inner
+    }
+
+    pub fn get_ref(&self) -> &RawTcpStream {
+        &self.inner
+    }
+
+    pub fn get_mut(&mut self) -> &mut RawTcpStream {
+        &mut self.inner
+    }
+
+    pub fn into_stream(self) -> Stream {
+        self.inner
+    }
+}
+
+impl AsyncRead for TcpStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TcpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[async_trait]
+impl ProtobufStream for TcpStream {
+    async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
+        match read_message(&mut self.inner).await {
+            Ok(msg) => Ok(Some(msg)),
+            Err(e) => {
+                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                    if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+                        return Ok(None);
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
+        write_message(&mut self.inner, msg).await
+    }
+}
 
 #[derive(Debug)]
 pub struct TcpTransport {
@@ -24,7 +111,7 @@ pub struct TcpTransport {
 #[async_trait]
 impl Transport for TcpTransport {
     type Acceptor = Listener;
-    type Stream = Stream;
+    type Stream = TcpStream;
     type RawStream = Stream;
 
     fn new(config: &TransportConfig) -> Result<Self> {
@@ -36,14 +123,41 @@ impl Transport for TcpTransport {
 
     #[cfg(unix)]
     fn as_raw_fd(conn: &Self::Stream) -> RawFd {
-        match conn {
-            Stream::Tcp(conn) => conn.as_raw_fd(),
-            Stream::Unix(conn) => conn.as_raw_fd(),
+        use std::os::fd::AsRawFd;
+        match conn.get_ref() {
+            Stream::Tcp(tcp_stream) => tcp_stream.as_raw_fd(),
+            #[cfg(unix)]
+            Stream::Unix(unix_stream) => unix_stream.as_raw_fd(),
         }
     }
 
     fn hint(conn: &Self::Stream, opt: SocketOpts) {
-        opt.apply(conn);
+        // Apply socket options to the underlying raw TCP stream
+        // We can't clone TcpStream, so we need to apply options differently
+        if let Some(v) = opt.keepalive {
+            let keepalive_duration = std::time::Duration::from_secs(v.keepalive_secs);
+            let keepalive_interval = std::time::Duration::from_secs(v.keepalive_interval);
+
+            if let Err(e) =
+                try_set_tcp_keepalive(conn.get_ref(), keepalive_duration, keepalive_interval)
+            {
+                tracing::error!("Failed to set keepalive: {:#}", e);
+            }
+        }
+
+        if let Some(nodelay) = opt.nodelay {
+            match conn.get_ref() {
+                Stream::Tcp(tcp_stream) => {
+                    if let Err(e) = tcp_stream.set_nodelay(nodelay) {
+                        tracing::error!("Failed to set nodelay: {:#}", e);
+                    }
+                }
+                #[cfg(unix)]
+                Stream::Unix(_) => {
+                    // Unix sockets don't support nodelay
+                }
+            }
+        }
     }
 
     async fn bind(&self, addr: NamedSocketAddr) -> Result<Self::Acceptor> {
@@ -57,13 +171,13 @@ impl Transport for TcpTransport {
     }
 
     async fn handshake(&self, conn: Self::RawStream) -> Result<Self::Stream> {
-        Ok(conn)
+        Ok(TcpStream::new(conn))
     }
 
     async fn connect(&self, addr: &AddrMaybeCached) -> Result<Self::Stream> {
         let s = tcp_connect_with_proxy(addr, self.cfg.proxy.as_ref()).await?;
         self.socket_opts.apply(&s);
-        Ok(s)
+        Ok(TcpStream::new(s))
     }
 }
 
@@ -71,22 +185,31 @@ impl Transport for TcpTransport {
 // The good news is that using socket2 it can be easily done, without losing portability.
 // See https://github.com/tokio-rs/tokio/issues/3082
 pub fn try_set_tcp_keepalive(
-    conn: &TcpStream,
+    conn: &RawTcpStream,
     keepalive_duration: Duration,
     keepalive_interval: Duration,
 ) -> Result<()> {
-    let s = SockRef::from(conn);
-    let keepalive = TcpKeepalive::new()
-        .with_time(keepalive_duration)
-        .with_interval(keepalive_interval);
+    match conn {
+        Stream::Tcp(tcp_stream) => {
+            let s = SockRef::from(tcp_stream);
+            let keepalive = TcpKeepalive::new()
+                .with_time(keepalive_duration)
+                .with_interval(keepalive_interval);
 
-    trace!(
-        "Set TCP keepalive {:?} {:?}",
-        keepalive_duration,
-        keepalive_interval
-    );
+            trace!(
+                "Set TCP keepalive {:?} {:?}",
+                keepalive_duration,
+                keepalive_interval
+            );
 
-    Ok(s.set_tcp_keepalive(&keepalive)?)
+            Ok(s.set_tcp_keepalive(&keepalive)?)
+        }
+        #[cfg(unix)]
+        Stream::Unix(_) => {
+            // Unix sockets don't support TCP keepalive
+            Ok(())
+        }
+    }
 }
 
 /// Create a TcpStream using a proxy
@@ -94,11 +217,12 @@ pub fn try_set_tcp_keepalive(
 pub async fn tcp_connect_with_proxy(addr: &AddrMaybeCached, proxy: Option<&Url>) -> Result<Stream> {
     if let Some(url) = proxy {
         let addr = &addr.addr;
-        let mut s = TcpStream::connect((
+        let proxy_addr = format!(
+            "{}:{}",
             url.host_str().expect("proxy url should have host field"),
-            url.port().expect("proxy url should have port field"),
-        ))
-        .await?;
+            url.port().expect("proxy url should have port field")
+        );
+        let mut s = Stream::connect(&NamedSocketAddr::from_str(&proxy_addr)?).await?;
 
         let auth = if !url.username().is_empty() || url.password().is_some() {
             Some(async_socks5::Auth {
@@ -130,7 +254,7 @@ pub async fn tcp_connect_with_proxy(addr: &AddrMaybeCached, proxy: Option<&Url>)
             }
             _ => panic!("unknown proxy scheme"),
         }
-        Ok(Stream::Tcp(s))
+        Ok(s)
     } else {
         Ok(match addr.socket_addr.as_ref() {
             Some(s) => Stream::connect(s).await?,

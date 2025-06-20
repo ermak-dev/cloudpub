@@ -39,6 +39,8 @@ pub enum Commands {
     Login(LoginArgs),
     #[clap(about = "Logout and clear saved token")]
     Logout,
+    #[clap(about = "Upgrade client to the latest version")]
+    Upgrade,
     #[clap(about = "Manage system service")]
     Service {
         #[clap(subcommand)]

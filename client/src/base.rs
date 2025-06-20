@@ -10,17 +10,18 @@ use common::logging::{init_log, WorkerGuard};
 use common::protocol::message::Message;
 use common::protocol::{
     ConnectState, EndpointClear, EndpointList, EndpointRemove, EndpointStartAll, EndpointStop,
-    ErrorKind, Stop,
+    ErrorKind, PerformUpgrade, Stop,
 };
 use common::version::{LONG_VERSION, VERSION};
 use dirs::cache_dir;
+use futures::future::FutureExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use std::env;
 use std::io::Write;
 use std::sync::Arc;
-use tokio::sync::broadcast;
-use tracing::debug;
+use tokio::sync::{broadcast, mpsc};
+use tracing::{debug, error};
 
 const CONFIG_FILE: &str = "client.toml";
 
@@ -78,27 +79,27 @@ fn handle_service_command(action: &ServiceAction, config: &ClientConfig) -> Resu
     match action {
         ServiceAction::Install => {
             service_manager.install()?;
-            println!("Service installed successfully");
+            println!("{}", crate::t!("service-installed"));
         }
         ServiceAction::Uninstall => {
             service_manager.uninstall()?;
-            println!("Service uninstalled successfully");
+            println!("{}", crate::t!("service-uninstalled"));
         }
         ServiceAction::Start => {
             service_manager.start()?;
-            println!("Service started successfully");
+            println!("{}", crate::t!("service-started"));
         }
         ServiceAction::Stop => {
             service_manager.stop()?;
-            println!("Service stopped successfully");
+            println!("{}", crate::t!("service-stopped-service"));
         }
         ServiceAction::Status => {
             let status = service_manager.status()?;
             match status {
-                ServiceStatus::Running => println!("Service is running"),
-                ServiceStatus::Stopped => println!("Service is stopped"),
-                ServiceStatus::NotInstalled => println!("Service is not installed"),
-                ServiceStatus::Unknown => println!("Service status is unknown"),
+                ServiceStatus::Running => println!("{}", crate::t!("service-running")),
+                ServiceStatus::Stopped => println!("{}", crate::t!("service-stopped-status")),
+                ServiceStatus::NotInstalled => println!("{}", crate::t!("service-not-installed")),
+                ServiceStatus::Unknown => println!("{}", crate::t!("service-status-unknown")),
             }
         }
     }
@@ -141,7 +142,7 @@ pub async fn cli_main(cli: Cli, config: Arc<RwLock<ClientConfig>>) -> Result<()>
     })
     .context("Error setting Ctrl-C handler")?;
 
-    let (command_tx, command_rx) = broadcast::channel(1024);
+    let (command_tx, command_rx) = mpsc::channel(1024);
     main_loop(cli, config, command_tx, command_rx, None, None).await
 }
 
@@ -162,8 +163,8 @@ fn make_spinner(msg: String) -> ProgressBar {
 pub async fn main_loop(
     mut cli: Cli,
     config: Arc<RwLock<ClientConfig>>,
-    command_tx: broadcast::Sender<Message>,
-    command_rx: broadcast::Receiver<Message>,
+    command_tx: mpsc::Sender<Message>,
+    command_rx: mpsc::Receiver<Message>,
     stdout: Option<broadcast::Sender<String>>,
     stderr: Option<broadcast::Sender<String>>,
 ) -> Result<()> {
@@ -183,7 +184,7 @@ pub async fn main_loop(
         }
     };
 
-    let (result_tx, mut result_rx) = broadcast::channel(1024);
+    let (result_tx, mut result_rx) = mpsc::channel(1024);
 
     let mut pings = 1;
 
@@ -199,7 +200,10 @@ pub async fn main_loop(
         }
         Commands::Purge => {
             let cache_dir = get_cache_dir("")?;
-            debug!("Purge cache dir: {:?}", cache_dir.to_str().unwrap());
+            debug!(
+                "{}",
+                crate::t!("purge-cache-dir", "path" => cache_dir.to_str().unwrap())
+            );
             std::fs::remove_dir_all(&cache_dir).ok();
             return Ok(());
         }
@@ -263,7 +267,8 @@ pub async fn main_loop(
         | Commands::Break
         | Commands::Ping(_)
         | Commands::Ls
-        | Commands::Clean => {
+        | Commands::Clean
+        | Commands::Upgrade => {
             config.read().validate()?;
         }
         Commands::Service { action } => {
@@ -273,24 +278,45 @@ pub async fn main_loop(
 
     debug!("Config: {:?}", config);
 
-    tokio::spawn(run_client(config.clone(), command_rx, result_tx));
+    tokio::spawn(async move {
+        if let Err(err) = run_client(config.clone(), command_rx, result_tx)
+            .boxed()
+            .await
+        {
+            error!("Error running client: {:?}", err);
+        }
+    });
 
     let mut current_spinner = None;
     let mut progress_bar = None;
 
     loop {
-        match result_rx.recv().await? {
+        match result_rx
+            .recv()
+            .await
+            .context("Failed to receive message")?
+        {
             Message::Error(err) => {
                 let kind: ErrorKind = err.kind.try_into().unwrap_or(ErrorKind::Fatal);
                 if kind == ErrorKind::Fatal || kind == ErrorKind::AuthFailed {
-                    command_tx.send(Message::Stop(Stop {})).ok();
+                    command_tx.send(Message::Stop(Stop {})).await.ok();
                     bail!("{}", err.message);
+                } else {
+                    write_stderr(err.message.to_string());
                 }
             }
 
             Message::UpgradeAvailable(info) => match cli.command {
-                Commands::Publish(_) | Commands::Run => {
-                    write_stderr(crate::t!("upgrade-available", "version" => info.version));
+                Commands::Upgrade => {
+                    command_tx
+                        .send(Message::PerformUpgrade(PerformUpgrade {
+                            version: info.version.clone(),
+                        }))
+                        .await
+                        .context("Failed to send upgrade message")?;
+                }
+                Commands::Run | Commands::Publish(_) => {
+                    write_stderr(crate::t!("upgrade-available", "version" => info.version.clone()));
                 }
                 _ => {}
             },
@@ -319,9 +345,15 @@ pub async fn main_loop(
                             break;
                         }
                         Commands::Publish(_) | Commands::Run => {
-                            write_stdout(
-                                crate::t!("service-published", "endpoint" => endpoint.to_string()),
-                            );
+                            if endpoint.error.is_empty() {
+                                write_stdout(
+                                    crate::t!("service-published", "endpoint" => endpoint.to_string()),
+                                )
+                            } else {
+                                write_stdout(
+                                    crate::t!("service-error", "endpoint" => endpoint.to_string()),
+                                )
+                            }
                         }
                         _ => {}
                     }
@@ -350,29 +382,43 @@ pub async fn main_loop(
 
                     match cli.command {
                         Commands::Ls => {
-                            command_tx.send(Message::EndpointList(EndpointList {}))?;
+                            command_tx
+                                .send(Message::EndpointList(EndpointList {}))
+                                .await?;
                         }
                         Commands::Clean => {
-                            command_tx.send(Message::EndpointClear(EndpointClear {}))?;
+                            command_tx
+                                .send(Message::EndpointClear(EndpointClear {}))
+                                .await?;
                         }
                         Commands::Run => {
-                            command_tx.send(Message::EndpointStartAll(EndpointStartAll {}))?;
+                            command_tx
+                                .send(Message::EndpointStartAll(EndpointStartAll {}))
+                                .await?;
                         }
                         Commands::Publish(ref endpoint) => {
-                            command_tx.send(Message::EndpointStart(endpoint.parse()?))?;
+                            command_tx
+                                .send(Message::EndpointStart(endpoint.parse()?))
+                                .await?;
                         }
                         Commands::Register(ref endpoint) => {
-                            command_tx.send(Message::EndpointStart(endpoint.parse()?))?;
+                            command_tx
+                                .send(Message::EndpointStart(endpoint.parse()?))
+                                .await?;
                         }
                         Commands::Unpublish(ref args) => {
                             if args.remove {
-                                command_tx.send(Message::EndpointRemove(EndpointRemove {
-                                    guid: args.guid.clone(),
-                                }))?;
+                                command_tx
+                                    .send(Message::EndpointRemove(EndpointRemove {
+                                        guid: args.guid.clone(),
+                                    }))
+                                    .await?;
                             } else {
-                                command_tx.send(Message::EndpointStop(EndpointStop {
-                                    guid: args.guid.clone(),
-                                }))?;
+                                command_tx
+                                    .send(Message::EndpointStop(EndpointStop {
+                                        guid: args.guid.clone(),
+                                    }))
+                                    .await?;
                             }
                         }
                         Commands::Ping(ref args) => {
@@ -437,7 +483,7 @@ pub async fn main_loop(
         }
     }
 
-    command_tx.send(Message::Stop(Stop {})).ok();
+    command_tx.send(Message::Stop(Stop {})).await.ok();
 
     Ok(())
 }

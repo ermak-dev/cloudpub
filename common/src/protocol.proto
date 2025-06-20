@@ -74,6 +74,12 @@ message ServerEndpoint {
   ClientEndpoint client = 6;
   int64 id = 7;
   string bind_addr = 8;
+  string error = 9;
+}
+
+message CreateDataChannelWithId {
+  ServerEndpoint endpoint = 1;
+  uint32 channel_id = 2;
 }
 
 message AgentInfo {
@@ -92,6 +98,41 @@ message AgentInfo {
 message DataChannelInfo {
   string agent_id = 1;
   string guid = 2;
+}
+
+message DataChannelData {
+  uint32 channel_id = 1;
+  bytes data = 2;
+}
+
+message SocketAddr {
+  oneof addr {
+    SocketAddrV4 v4 = 1;
+    SocketAddrV6 v6 = 2;
+  }
+}
+
+message SocketAddrV4 {
+  fixed32 ip = 1;    // IPv4 address as 32-bit integer
+  uint32 port = 2;   // Port number
+}
+
+message SocketAddrV6 {
+  bytes ip = 1;      // IPv6 address as 16 bytes
+  uint32 port = 2;   // Port number
+  uint32 flowinfo = 3;
+  uint32 scope_id = 4;
+}
+
+message DataChannelDataUdp {
+  uint32 channel_id = 1;
+  bytes data = 2;
+  SocketAddr socket_addr = 3;
+}
+
+message DataChannelEof {
+  uint32 channel_id = 1;
+  string error = 2;
 }
 
 message UpgradeInfo {
@@ -167,6 +208,10 @@ message EndpointRemoveAck {
 message EndpointStartAll {
 }
 
+message PerformUpgrade {
+    string version = 1;
+}
+
 // Message wrapper
 message Message {
   oneof message {
@@ -195,5 +240,10 @@ message Message {
     EndpointStartAll endpoint_start_all = 23;
     EndpointStopAck endpoint_stop_ack = 24;
     EndpointRemoveAck endpoint_remove_ack = 25;
+    DataChannelData data_channel_data = 26;
+    DataChannelDataUdp data_channel_data_udp = 27;
+    DataChannelEof data_channel_eof = 28;
+    CreateDataChannelWithId create_data_channel_with_id = 29;
+    PerformUpgrade perform_upgrade = 30;
   }
 }

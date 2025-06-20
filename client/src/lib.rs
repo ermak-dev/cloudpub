@@ -10,3 +10,4 @@ pub mod ping;
 pub mod plugins;
 pub mod service;
 pub mod shell;
+pub mod upgrade;

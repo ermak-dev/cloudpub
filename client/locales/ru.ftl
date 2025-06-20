@@ -4,6 +4,7 @@ error-network = Ошибка сети, пробуем еще раз.
 error-process-terminated = Процесс сервера был неожиданно завершен
 error-auth-missing = Отсутствует токен авторизации
 error-measurement = Ошибка измерения
+error-finding-free-port = Ошибка поиска свободного порта
 
 # Connection states
 connecting = Подключение к серверу...
@@ -48,6 +49,7 @@ error-writing-httpd-conf = Ошибка записи httpd.conf
 
 # Service messages
 service-published = Сервис опубликован: {$endpoint}
+service-error = Ошибка публикации: {$endpoint}
 service-registered = Сервис зарегистрирован: {$endpoint}
 service-stopped = Сервис остановлен: {$guid}
 service-removed = Сервис удален: {$guid}
@@ -59,7 +61,7 @@ enter-email = Введите email:{" "}
 enter-password = Введите пароль:{" "}
 session-terminated = Сессия завершена, токен авторизации сброшен
 client-authorized = Клиент успешно авторизован
-upgrade-available = Доступна новая версия: {$version}
+upgrade-available = Доступна новая версия: {$version}. Выполните команду `clo upgrade` для обновления.
 
 # Ping statistics
 ping-time-percentiles = Время пинга (процентили):
@@ -70,3 +72,26 @@ invalid-protocol = Неверный протокол
 invalid-address = Неправильно указан адрес: {$address}
 invalid-address-error = Неправильно указан адрес ({$error}): {$address}
 port-required = Для этого прокола нужно указать порт
+
+# Service messages
+service-installed = Сервис успешно установлен
+service-uninstalled = Сервис успешно удален
+service-started = Сервис успешно запущен
+service-stopped-service = Сервис успешно остановлен
+service-running = Сервис запущен
+service-stopped-status = Сервис остановлен
+service-not-installed = Сервис не установлен
+service-status-unknown = Статус сервиса неизвестен
+
+# Update messages
+applying-update = Применение обновления и перезапуск...
+downloading-update = Загрузка обновления в {$path}
+update-downloaded = Обновление загружено в: {$path}
+update-unpacked = Обновление распаковано в: {$path}
+
+# Cache messages
+purge-cache-dir = Очистка кеш директории: {$path}
+
+# GUI messages
+show-window = Открыть CloudPub
+quit = Завершить

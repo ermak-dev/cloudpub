@@ -5,12 +5,12 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use common::protocol::message::Message;
 use common::protocol::ServerEndpoint;
-use common::utils::free_port_for_bind;
+use common::utils::find_free_tcp_port;
 use parking_lot::RwLock;
 use regex::Regex;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tracing::info;
 
 #[cfg(unix)]
@@ -62,9 +62,9 @@ impl Plugin for MinecraftPlugin {
 
     async fn setup(
         &self,
-        config: Arc<RwLock<ClientConfig>>,
-        command_rx: broadcast::Receiver<Message>,
-        result_tx: broadcast::Sender<Message>,
+        config: &Arc<RwLock<ClientConfig>>,
+        command_rx: &mut mpsc::Receiver<Message>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
         info!("Setup minecraft server");
 
@@ -87,8 +87,8 @@ impl Plugin for MinecraftPlugin {
             config.clone(),
             JDK_URL,
             &jdk_file,
-            command_rx.resubscribe(),
-            result_tx.clone(),
+            command_rx,
+            result_tx,
         )
         .await
         .context(crate::t!("error-downloading-jdk"))?;
@@ -109,7 +109,7 @@ impl Plugin for MinecraftPlugin {
             None,
             Default::default(),
             Some((crate::t!("installing-jdk"), result_tx.clone(), 450)),
-            command_rx.resubscribe(),
+            command_rx,
         )
         .await?;
 
@@ -119,8 +119,9 @@ impl Plugin for MinecraftPlugin {
             &jdk_file,
             &jdk_dir,
             1,
-            result_tx.clone(),
+            result_tx,
         )
+        .await
         .context(crate::t!("error-unpacking-jdk"))?;
 
         let minecraft_jar = config
@@ -143,8 +144,8 @@ impl Plugin for MinecraftPlugin {
                 config.clone(),
                 &minecraft_jar,
                 &minecraft_file,
-                command_rx.resubscribe(),
-                result_tx.clone(),
+                command_rx,
+                result_tx,
             )
             .await
             .with_context(
@@ -160,9 +161,9 @@ impl Plugin for MinecraftPlugin {
 
     async fn publish(
         &self,
-        endpoint: &mut ServerEndpoint,
-        config: Arc<RwLock<ClientConfig>>,
-        result_tx: broadcast::Sender<Message>,
+        endpoint: &ServerEndpoint,
+        config: &Arc<RwLock<ClientConfig>>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess> {
         let minecraft_dir: PathBuf = endpoint.client.as_ref().unwrap().local_addr.clone().into();
         std::fs::create_dir_all(&minecraft_dir)
@@ -183,7 +184,9 @@ impl Plugin for MinecraftPlugin {
             std::fs::write(eula, "eula=true").context(crate::t!("error-creating-eula-file"))?;
         }
 
-        free_port_for_bind(endpoint).await?;
+        let port = find_free_tcp_port()
+            .await
+            .context(crate::t!("error-finding-free-port"))?;
 
         let re = Regex::new(r"server\-port\s*=\s*\d+").unwrap();
 
@@ -192,8 +195,7 @@ impl Plugin for MinecraftPlugin {
 
         // Read the server config file and replace 'server-port=XXXX' with the new port
         let server_config = re.replace_all(&server_config, |_caps: &regex::Captures| {
-            let new_port = endpoint.client.as_ref().unwrap().local_port.to_string();
-            format!("server-port={}", new_port)
+            format!("server-port={}", port)
         });
 
         std::fs::write(&server_cfg, server_config.to_string())
@@ -215,7 +217,6 @@ impl Plugin for MinecraftPlugin {
         // Add the jar file argument
         args.push("-jar".to_string());
         args.push(minecraft_file.to_str().unwrap().to_string());
-
         if !config.read().gui {
             args.push("nogui".to_string());
         }
@@ -225,7 +226,8 @@ impl Plugin for MinecraftPlugin {
             args,
             Some(minecraft_dir),
             Default::default(),
-            result_tx,
+            result_tx.clone(),
+            port,
         );
         Ok(server)
     }

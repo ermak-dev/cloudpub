@@ -2,7 +2,6 @@
 use anyhow::{anyhow, Context, Result};
 use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::str::FromStr;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::trace;
@@ -29,13 +28,14 @@ pub fn str_enum<E: TryFrom<i32> + ToString>(e: i32) -> String {
 }
 
 pub mod v2 {
-    use crate::protocol::str_enum;
+    pub use crate::protocol::str_enum;
 
     use super::{DefaultPort, Endpoint};
     use anyhow::{bail, Context, Result};
     use bytes::BytesMut;
-    use prost::Message as ProstMessage;
+    pub use prost::Message as ProstMessage;
 
+    use bytes::Bytes;
     use std::fmt::{self, Display, Formatter};
     use std::str::FromStr;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -43,6 +43,11 @@ pub mod v2 {
     use urlencoding::encode;
 
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
+
+    pub struct Data {
+        pub data: Bytes,
+        pub socket_addr: Option<std::net::SocketAddr>,
+    }
 
     impl Display for Protocol {
         fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -91,27 +96,6 @@ pub mod v2 {
             }
         }
     }
-    /*
-
-    impl Serialize for Protocol {
-        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            serializer.serialize_str(&self.to_string())
-        }
-    }
-
-    impl<'de> Deserialize<'de> for Protocol {
-        fn deserialize<D>(deserializer: D) -> std::result::Result<Protocol, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            let s = String::deserialize(deserializer)?;
-            Protocol::from_str(&s).map_err(serde::de::Error::custom)
-        }
-    }
-    */
 
     impl FromStr for Role {
         type Err = anyhow::Error;
@@ -227,16 +211,20 @@ pub mod v2 {
     impl Display for ServerEndpoint {
         fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
             let client = self.client.as_ref().unwrap();
-            write!(
-                f,
-                "{} -> {}://{}{}:{}{}",
-                client,
-                Protocol::try_from(self.remote_proto).unwrap(),
-                client.credentials(),
-                self.remote_addr,
-                self.remote_port,
-                client.local_path
-            )
+            if self.error.is_empty() {
+                write!(
+                    f,
+                    "{} -> {}://{}{}:{}{}",
+                    client,
+                    Protocol::try_from(self.remote_proto).unwrap(),
+                    client.credentials(),
+                    self.remote_addr,
+                    self.remote_port,
+                    client.local_path
+                )
+            } else {
+                write!(f, "{} -> {}", client, self.error)
+            }
         }
     }
 
@@ -261,7 +249,13 @@ pub mod v2 {
             Message::decode(buf.as_slice()).context("Failed to decode Protocol Buffers message")?;
 
         let msg: Message = proto_msg;
-        debug!("Received proto message: {:?}", msg);
+        /*
+        match msg.message.unwrap() {
+            Message:: DataChannelData {data}  => debug!("Received data: {} bytes", data.len()),
+            Message::DataChannelDataUdp {data} => debug!("Received UDP data: {} bytes", data.len()),
+            msg => debug!("Received proto message: {:?}", msg),
+        }
+        */
         Ok(msg.message.unwrap())
     }
 
@@ -547,6 +541,7 @@ pub mod v1 {
                 remote_addr: se.remote_addr,
                 remote_port: se.remote_port as u32,
                 client: Some(se.client.into()),
+                error: String::new(),
             }
         }
     }
@@ -848,13 +843,13 @@ pub type UdpPacketLen = u16; // `u16` should be enough for any practical UDP tra
                              //
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UdpHeader {
-    from: SocketAddr,
+    from: std::net::SocketAddr,
     len: UdpPacketLen,
 }
 
 #[derive(Debug)]
 pub struct UdpTraffic {
-    pub from: SocketAddr,
+    pub from: std::net::SocketAddr,
     pub data: Bytes,
 }
 
@@ -879,7 +874,7 @@ impl UdpTraffic {
     #[allow(dead_code)]
     pub async fn write_slice<T: AsyncWrite + Unpin>(
         writer: &mut T,
-        from: SocketAddr,
+        from: std::net::SocketAddr,
         data: &[u8],
     ) -> Result<()> {
         let hdr = UdpHeader {

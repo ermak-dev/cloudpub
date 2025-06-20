@@ -1,12 +1,14 @@
 use crate::config::{ClientConfig, EnvConfig};
 use crate::shell::{download, get_cache_dir, unzip, SubProcess, DOWNLOAD_SUBDIR};
+use crate::t;
 use anyhow::{Context, Result};
 use common::protocol::message::Message;
 use common::protocol::ServerEndpoint;
+use common::utils::find_free_tcp_port;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 #[cfg(target_os = "windows")]
 pub const HTTPD_EXE: &str = "httpd.exe";
@@ -14,9 +16,9 @@ pub const HTTPD_EXE: &str = "httpd.exe";
 pub const HTTPD_EXE: &str = "httpd";
 
 pub async fn setup_httpd(
-    config: Arc<RwLock<ClientConfig>>,
-    command_rx: broadcast::Receiver<Message>,
-    result_tx: broadcast::Sender<Message>,
+    config: &Arc<RwLock<ClientConfig>>,
+    command_rx: &mut mpsc::Receiver<Message>,
+    result_tx: &mpsc::Sender<Message>,
     env: EnvConfig,
 ) -> Result<()> {
     let cache_dir = get_cache_dir(DOWNLOAD_SUBDIR)?;
@@ -37,8 +39,8 @@ pub async fn setup_httpd(
         config.clone(),
         format!("{}download/{}", config.read().server, env.httpd).as_str(),
         &httpd,
-        command_rx.resubscribe(),
-        result_tx.clone(),
+        command_rx,
+        result_tx,
     )
     .await
     .context(crate::t!("error-downloading-webserver"))?;
@@ -48,8 +50,9 @@ pub async fn setup_httpd(
         &httpd,
         &httpd_dir,
         1,
-        result_tx.clone(),
+        result_tx,
     )
+    .await
     .context(crate::t!("error-unpacking-webserver"))?;
 
     #[cfg(target_os = "windows")]
@@ -63,8 +66,8 @@ pub async fn setup_httpd(
             config.clone(),
             format!("{}download/{}", config.read().server, env.redist).as_str(),
             &redist,
-            command_rx.resubscribe(),
-            result_tx.clone(),
+            command_rx,
+            result_tx,
         )
         .await
         .context(crate::t!("error-downloading-vcpp"))?;
@@ -79,7 +82,7 @@ pub async fn setup_httpd(
             None,
             Default::default(),
             Some((crate::t!("installing-vcpp"), result_tx.clone(), 2)),
-            command_rx.resubscribe(),
+            command_rx,
         )
         .await
         {
@@ -108,7 +111,7 @@ pub async fn start_httpd(
     config_subdir: &str,
     publish_dir: &str,
     env: EnvConfig,
-    result_tx: broadcast::Sender<Message>,
+    result_tx: mpsc::Sender<Message>,
 ) -> Result<SubProcess> {
     let httpd_dir = get_cache_dir(&env.httpd_dir)?;
     let configs_dir = get_cache_dir(config_subdir)?;
@@ -122,12 +125,13 @@ pub async fn start_httpd(
     let mut lock_file = configs_dir.clone();
     lock_file.push(format!("{}.lock", endpoint.guid));
 
+    let port = find_free_tcp_port()
+        .await
+        .context(t!("error-finding-free-port"))?;
+
     let httpd_config = config_template.replace("[[PUBLISH_DIR]]", publish_dir);
     let httpd_config = httpd_config.replace("[[SRVROOT]]", httpd_dir.to_str().unwrap());
-    let httpd_config = httpd_config.replace(
-        "[[PORT]]",
-        &endpoint.client.as_ref().unwrap().local_port.to_string(),
-    );
+    let httpd_config = httpd_config.replace("[[PORT]]", &port.to_string());
     let httpd_config = httpd_config.replace("[[PID_FILE]]", pid_file.to_str().unwrap());
     let httpd_config = httpd_config.replace("[[LOCK_FILE]]", lock_file.to_str().unwrap());
 
@@ -163,6 +167,7 @@ pub async fn start_httpd(
         None,
         envs,
         result_tx,
+        port,
     );
     Ok(server)
 }

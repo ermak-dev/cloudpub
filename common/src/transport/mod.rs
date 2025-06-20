@@ -9,6 +9,14 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::error;
 
+use crate::protocol::v2::message::Message as ProtocolMessage;
+
+#[async_trait]
+pub trait ProtobufStream {
+    async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>>;
+    async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()>;
+}
+
 #[cfg(target_os = "linux")]
 use anyhow::bail;
 #[cfg(target_os = "linux")]
@@ -18,7 +26,7 @@ mod tcp;
 pub use tcp::{Listener, NamedSocketAddr, SocketAddr, Stream, TcpTransport};
 
 mod websocket;
-pub use websocket::{WebsocketTransport, WebsocketTunnel};
+pub use websocket::{WebsocketStream, WebsocketTransport};
 
 #[cfg(feature = "rustls")]
 pub mod rustls;
@@ -66,7 +74,7 @@ impl Display for AddrMaybeCached {
 pub trait Transport: Debug + Send + Sync {
     type Acceptor: Send + Sync;
     type RawStream: Send + Sync;
-    type Stream: 'static + AsyncRead + AsyncWrite + Unpin + Send + Sync + Debug;
+    type Stream: 'static + AsyncRead + AsyncWrite + ProtobufStream + Unpin + Send + Sync + Debug;
 
     fn new(config: &TransportConfig) -> Result<Self>
     where
@@ -88,7 +96,7 @@ pub trait Transport: Debug + Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Keepalive {
+pub struct Keepalive {
     // tcp_keepalive_time if the underlying protocol is TCP
     pub keepalive_secs: u64,
     // tcp_keepalive_intvl if the underlying protocol is TCP
@@ -98,9 +106,9 @@ struct Keepalive {
 #[derive(Debug, Clone, Copy)]
 pub struct SocketOpts {
     // None means do not change
-    nodelay: Option<bool>,
+    pub nodelay: Option<bool>,
     // keepalive must be Some or None at the same time, or the behavior will be platform-dependent
-    keepalive: Option<Keepalive>,
+    pub keepalive: Option<Keepalive>,
 }
 
 impl SocketOpts {
@@ -160,20 +168,19 @@ impl SocketOpts {
     }
 
     pub fn apply(&self, conn: &Stream) {
+        if let Some(v) = self.keepalive {
+            let keepalive_duration = Duration::from_secs(v.keepalive_secs);
+            let keepalive_interval = Duration::from_secs(v.keepalive_interval);
+
+            if let Err(e) = tcp::try_set_tcp_keepalive(conn, keepalive_duration, keepalive_interval)
+                .with_context(|| "Failed to set keepalive")
+            {
+                error!("{:#}", e);
+            }
+        }
+
         #[allow(irrefutable_let_patterns)]
         if let Stream::Tcp(conn) = conn {
-            if let Some(v) = self.keepalive {
-                let keepalive_duration = Duration::from_secs(v.keepalive_secs);
-                let keepalive_interval = Duration::from_secs(v.keepalive_interval);
-
-                if let Err(e) =
-                    tcp::try_set_tcp_keepalive(conn, keepalive_duration, keepalive_interval)
-                        .with_context(|| "Failed to set keepalive")
-                {
-                    error!("{:#}", e);
-                }
-            }
-
             if let Some(nodelay) = self.nodelay {
                 if let Err(e) = conn
                     .set_nodelay(nodelay)

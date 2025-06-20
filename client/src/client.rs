@@ -1,67 +1,68 @@
 use anyhow::{anyhow, bail, Context, Result};
 use backoff::backoff::Backoff;
-use backoff::future::retry_notify;
-use backoff::ExponentialBackoff;
-use bytes::{Bytes, BytesMut};
-use common::config::TransportType;
 use common::protocol::message::Message;
 use common::protocol::{
-    read_message, write_message, AgentInfo, ConnectState, DataChannelInfo, EndpointRemove,
-    EndpointStop, ErrorInfo, ErrorKind, HeartBeat, Protocol, ServerEndpoint, UdpTraffic,
+    AgentInfo, ConnectState, Data, DataChannelData, DataChannelDataUdp, DataChannelEof,
+    EndpointRemove, EndpointStop, ErrorInfo, ErrorKind, HeartBeat, Protocol, ServerEndpoint,
 };
-use common::transport::{
-    AddrMaybeCached, SocketOpts, TcpTransport, TlsTransport, Transport, WebsocketTransport,
+use common::routing::UdpRoutingTable;
+use common::transport::{AddrMaybeCached, SocketOpts, Transport, WebsocketTransport};
+use common::utils::{
+    get_platform, is_tcp_port_available, proto_to_socket_addr, socket_addr_to_proto,
 };
-use common::utils::{get_platform, udp_connect};
 use common::version::VERSION;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use tokio::io::{self, copy_bidirectional, AsyncReadExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio::time::{self, Duration, Instant};
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
-use common::constants::{
-    run_control_chan_backoff, DEFAULT_CLIENT_RETRY_INTERVAL_SECS, UDP_BUFFER_SIZE, UDP_SENDQ_SIZE,
-    UDP_TIMEOUT,
-};
+use common::constants::{run_control_chan_backoff, DEFAULT_CLIENT_RETRY_INTERVAL_SECS};
+use futures::future::FutureExt;
 
 use crate::config::ClientConfig;
 use crate::shell::SubProcess;
+use crate::upgrade::handle_upgrade_available;
+use common::transport::ProtobufStream;
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 use std::fmt::{self, Debug, Formatter};
 
 #[cfg(feature = "plugins")]
 use crate::plugins::registry::PluginRegistry;
 
-struct DataChannel<T: Transport> {
-    agent_id: String,
-    remote_addr: AddrMaybeCached,
-    connector: Arc<T>,
-    socket_opts: SocketOpts,
-    endpoint: ServerEndpoint,
+struct DataChannel {
+    data_tx: mpsc::Sender<Data>,
 }
 
-type Service<T> = Arc<DataChannel<T>>;
+impl DataChannel {
+    fn new_client(data_tx: mpsc::Sender<Data>) -> Self {
+        Self { data_tx }
+    }
+}
 
-type Services<T> = Arc<RwLock<HashMap<String, Service<T>>>>;
+type Service = Arc<DataChannel>;
 
-impl<T: Transport> Debug for DataChannel<T> {
+type Services = Arc<RwLock<HashMap<String, Service>>>;
+
+impl Debug for DataChannel {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.endpoint.client.as_ref().unwrap().to_string())
+        f.write_str("DataChannel")
     }
 }
 
 // Holds the state of a client
 struct Client<T: Transport> {
     config: Arc<RwLock<ClientConfig>>,
-    services: Services<T>,
+    services: Services,
     transport: Arc<T>,
-    servers: HashMap<String, (SubProcess, u16)>,
+    servers: HashMap<String, SubProcess>,
     connected: bool,
+    // New fields for control channel data transfer
+    data_channels: Arc<RwLock<HashMap<u32, DataChannel>>>,
 }
 
 impl<T: 'static + Transport> Client<T> {
@@ -77,16 +78,16 @@ impl<T: 'static + Transport> Client<T> {
             servers: Default::default(),
             transport,
             connected: false,
+            data_channels: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
     // The entrypoint of Client
     async fn run(
         &mut self,
-        command_rx: broadcast::Receiver<Message>,
-        result_tx: broadcast::Sender<Message>,
+        mut command_rx: mpsc::Receiver<Message>,
+        result_tx: mpsc::Sender<Message>,
     ) -> Result<()> {
-        let result_tx = result_tx.clone();
         let transport = self.transport.clone();
 
         let config = self.config.clone();
@@ -97,17 +98,19 @@ impl<T: 'static + Transport> Client<T> {
         let mut start = Instant::now();
         result_tx
             .send(Message::ConnectState(ConnectState::Connecting.into()))
+            .await
             .context("Can't send Connecting event")?;
         while let Err(err) = self
             .run_control_channel(
                 config.clone(),
                 transport.clone(),
-                command_rx.resubscribe(),
-                result_tx.clone(),
+                &mut command_rx,
+                &result_tx,
             )
+            .boxed()
             .await
         {
-            if result_tx.receiver_count() == 0 {
+            if result_tx.is_closed() {
                 // The client is shutting down
                 break;
             }
@@ -118,17 +121,21 @@ impl<T: 'static + Transport> Client<T> {
                         kind: ErrorKind::HandshakeFailed.into(),
                         message: crate::t!("error-network"),
                     }))
+                    .await
                     .context("Can't send Error event")?;
                 result_tx
                     .send(Message::ConnectState(ConnectState::Disconnected.into()))
+                    .await
                     .context("Can't send Disconnected event")?;
                 result_tx
                     .send(Message::ConnectState(ConnectState::Connecting.into()))
+                    .await
                     .context("Can't send Connecting event")?;
                 self.connected = false;
             }
 
             services.write().clear();
+            self.data_channels.write().clear();
 
             if start.elapsed() > Duration::from_secs(3) {
                 // The client runs for at least 3 secs and then disconnects
@@ -144,6 +151,7 @@ impl<T: 'static + Transport> Client<T> {
         }
 
         services.write().clear();
+        self.data_channels.write().clear();
 
         Ok(())
     }
@@ -152,15 +160,15 @@ impl<T: 'static + Transport> Client<T> {
         &mut self,
         config: Arc<RwLock<ClientConfig>>,
         transport: Arc<T>,
-        mut command_rx: broadcast::Receiver<Message>,
-        result_tx: broadcast::Sender<Message>,
+        command_rx: &mut mpsc::Receiver<Message>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
         let url = config.read().server.clone();
         let port = url.port().unwrap_or(443);
         let host = url.host_str().context("Failed to get host")?;
         let mut host_and_port = format!("{}:{}", host, port);
 
-        let (mut conn, remote_addr) = loop {
+        let (mut conn, _remote_addr) = loop {
             let mut remote_addr = AddrMaybeCached::new(&host_and_port);
             remote_addr
                 .resolve()
@@ -210,42 +218,47 @@ impl<T: 'static + Transport> Client<T> {
                 gui: config.read().gui,
                 platform: get_platform(),
                 hwid,
-                server_host_and_port: remote_addr.to_string(),
+                server_host_and_port: host_and_port.clone(),
             };
 
             debug!("Sending hello: {:?}", agent_info);
 
             let hello_send = Message::AgentHello(agent_info);
 
-            write_message(&mut conn, &hello_send)
+            conn.send_message(&hello_send)
                 .await
                 .context("Failed to send hello message")?;
 
             debug!("Reading ack");
-            match read_message(&mut conn)
+            match conn
+                .recv_message()
                 .await
                 .context("Failed to read ack message")?
             {
-                Message::AgentAck(args) => {
-                    if !args.token.is_empty() {
-                        let mut c = config.write();
-                        c.token = Some(args.token.as_str().into());
-                        c.save().context("Write config")?;
+                Some(msg) => match msg {
+                    Message::AgentAck(args) => {
+                        if !args.token.is_empty() {
+                            let mut c = config.write();
+                            c.token = Some(args.token.as_str().into());
+                            c.save().context("Write config")?;
+                        }
+                        break (conn, remote_addr);
                     }
-                    break (conn, remote_addr);
-                }
-                Message::Redirect(r) => {
-                    host_and_port = r.host_and_port;
-                    debug!("Redirecting to {}", host_and_port);
-                    continue;
-                }
-                Message::Error(err) => {
-                    result_tx
-                        .send(Message::Error(err.clone()))
-                        .context("Can't send server error event")?;
-                    bail!("Error: {:?}", err.kind);
-                }
-                v => bail!("Unexpected ack message: {:?}", v),
+                    Message::Redirect(r) => {
+                        host_and_port = r.host_and_port.clone();
+                        debug!("Redirecting to {}", host_and_port);
+                        continue;
+                    }
+                    Message::Error(err) => {
+                        result_tx
+                            .send(Message::Error(err.clone()))
+                            .await
+                            .context("Can't send server error event")?;
+                        bail!("Error: {:?}", err.kind);
+                    }
+                    v => bail!("Unexpected ack message: {:?}", v),
+                },
+                None => bail!("Connection closed while reading ack message"),
             };
         };
 
@@ -253,22 +266,24 @@ impl<T: 'static + Transport> Client<T> {
 
         result_tx
             .send(Message::ConnectState(ConnectState::Connected.into()))
+            .await
             .context("Can't send Connected event")?;
 
-        let (command_tx2, mut command_rx2) = mpsc::channel::<Message>(1);
+        let (command_tx2, mut command_rx2) = mpsc::channel::<Message>(1024);
 
         let heartbeat_timeout = config.read().heartbeat_timeout;
 
         loop {
-            let remote_addr = remote_addr.clone();
+            let command_tx2 = command_tx2.clone();
             tokio::select! {
                 cmd = command_rx2.recv() => {
                     if let Some(cmd) = cmd {
-                        write_message(&mut conn, &cmd).await.context("Failed to send command")?;
+                        conn.send_message(&cmd).await.context("Failed to send command")?;
                     }
                 },
                 cmd = command_rx.recv() => {
-                    if let Ok(cmd) = cmd {
+                    if let Some(cmd) = cmd {
+                        debug!("Received message: {:?}", cmd);
                         match cmd {
                             Message::EndpointStart(client) => {
                                 info!("Publishing service: {:?}", client);
@@ -282,48 +297,58 @@ impl<T: 'static + Transport> Client<T> {
                                     remote_port: 0,
                                     id: 0,
                                     bind_addr: String::new(),
+                                    error: String::new(),
                                 };
 
-                                result_tx.send(Message::EndpointAck(server_endpoint.clone())).context("Can't send Published event")?;
-
-                                let result_tx = result_tx.clone();
-                                let command_rx = command_rx.resubscribe();
-                                let command_tx2 = command_tx2.clone();
-                                let config = config.clone();
-
-                                tokio::spawn(async move {
-                                    handle_endpoint_start(protocol, config, command_rx, result_tx, command_tx2, client).await.ok();
-                                });
-
+                                result_tx.send(Message::EndpointAck(server_endpoint.clone()))
+                                    .await
+                                    .context("Can't send Published event")?;
+                                command_tx2
+                                    .send(Message::EndpointStart(client))
+                                    .await
+                                    .context("Failed to send EndpointStart message")?;
                             }
 
                             Message::EndpointStop(ep) => {
                                 info!("Unpublishing service: {:?}", ep.guid);
                                 // Stop server process if needed
-                                if let Some(mut srv) = self.servers.remove(&ep.guid) {
-                                    srv.0.stop();
-                                }
+                                self.servers.remove(&ep.guid);
                                 let msg = Message::EndpointStop(EndpointStop { guid: ep.guid });
-                                write_message(&mut conn, &msg).await.context("Failed to send message")?;
+                                conn.send_message(&msg).await.context("Failed to send message")?;
 
                             }
 
                             Message::EndpointRemove(ep) => {
                                 info!("Remove service: {:?}", ep.guid);
                                 // Stop server process if needed
-                                if let Some(mut srv) = self.servers.remove(&ep.guid) {
-                                    srv.0.stop();
-                                }
+                                self.servers.remove(&ep.guid);
                                 let msg = Message::EndpointRemove(EndpointRemove { guid: ep.guid });
-                                write_message(&mut conn, &msg).await.context("Failed to send message")?;
+                                conn.send_message(&msg).await.context("Failed to send message")?;
                             }
-
+                            Message::PerformUpgrade(info) => {
+                                let config_clone = config.clone();
+                                if let Err(e) = handle_upgrade_available(
+                                    &info.version,
+                                    config_clone,
+                                    command_rx,
+                                    result_tx,
+                                )
+                                .await
+                                {
+                                    result_tx.send(Message::Error(ErrorInfo {
+                                        kind: ErrorKind::Fatal.into(),
+                                        message: e.to_string(),
+                                    }))
+                                    .await
+                                    .context("Can't send Error event")?;
+                                }
+                            }
                             Message::Stop(_) => {
                                 info!("Stopping the client");
                                 break;
                             }
                             cmd => {
-                                write_message(&mut conn, &cmd).await.context("Failed to send message")?;
+                                conn.send_message(&cmd).await.context("Failed to send message")?;
                             }
                         };
                     } else {
@@ -331,73 +356,152 @@ impl<T: 'static + Transport> Client<T> {
                         break;
                     }
                 },
-                val = read_message(&mut conn) => {
-                    let val = val?;
-                    match val {
-                        Message::CreateDataChannel(mut endpoint) => {
-
-                            let socket_opts = SocketOpts::nodelay(endpoint.client.as_ref().unwrap().nodelay);
-                            if let Some(s) = self.servers.get(&endpoint.guid) {
-                                let client = endpoint.client.as_mut().unwrap();
-                                client.local_port = s.1 as u32;
-                                client.local_addr = "localhost".to_string();
-                                Some(s.1)
-                            } else {
-                                let protocol: Protocol = endpoint.client.as_ref().unwrap().local_proto.try_into().context("Unsupported protocol")?;
-                                debug!("Publish service: {:?}", endpoint);
-                                let res: Option<anyhow::Result<SubProcess>> = match protocol {
-                                    #[cfg(feature = "plugins")]
-                                    Protocol::OneC | Protocol::Minecraft | Protocol::Webdav => {
-                                        if let Some(plugin) = PluginRegistry::new().get(protocol) {
-                                            Some(plugin.publish(&mut endpoint, config.clone(), result_tx.clone()).await)
-                                        } else {
-                                            None
+                val = conn.recv_message() => {
+                    match val? {
+                        Some(val) => {
+                            match val {
+                                Message::EndpointAck(endpoint) => {
+                                    // Start plugin server if needed
+                                    if !self.servers.contains_key(&endpoint.guid) {
+                                        if let Err(err) = handle_endpoint_ack(&endpoint, &config, &mut command_rx2, result_tx, &mut self.servers).await {
+                                            error!("Error handling endpoint ack: {:?}", err);
+                                            continue;
                                         }
-                                    },
-                                    _ => {
-                                        None
                                     }
-                                };
-                                match res {
-                                    Some(Ok(p)) => {
-                                        self.servers.insert(endpoint.guid.clone(), (p, endpoint.client.as_ref().unwrap().local_port as u16));
-                                    }
-                                    Some(Err(err)) => {
-                                        error!("{:?}", err);
-                                        result_tx.send(Message::Error(
-                                            ErrorInfo {
-                                                kind: ErrorKind::Fatal.into(),
-                                                message: err.to_string()
-                                            })
-                                        ).context("Can't send Error event")?;
-                                        continue;
-                                    }
-                                    None => {}
+                                    result_tx.send(Message::EndpointAck(endpoint.clone()))
+                                        .await
+                                        .context("Can't send EndpointAck event")?;
                                 }
-                                None
-                            };
 
+                                Message::CreateDataChannelWithId(create_msg) => {
+                                    let channel_id = create_msg.channel_id;
+                                    let endpoint = create_msg.endpoint.unwrap();
 
-                            let service = Arc::new(DataChannel {
-                                agent_id: config.read().agent_id.clone(),
-                                remote_addr,
-                                connector: transport.clone(),
-                                socket_opts,
-                                endpoint: endpoint.clone(),
-                            });
-                            self.services.write().insert(endpoint.guid.clone(), service.clone());
-                            tokio::spawn(async move {
-                                if let Err(e) = run_data_channel(service).await.context("Failed to run the data channel") {
-                                    error!("{:?}", e);
+                                    debug!("Creating data channel {} for endpoint {:?}", channel_id, endpoint.guid);
+
+                                    // Create channels for data flow
+                                    let (data_tx, data_rx) = mpsc::channel::<Data>(1024);
+
+                                    // Register the data channel
+                                    {
+                                        let mut channels = self.data_channels.write();
+                                        channels.insert(channel_id, DataChannel::new_client(data_tx));
+                                    }
+
+                                    // Check if endpoint handled by plugin server
+                                    let client = endpoint.client.unwrap();
+                                    let local_addr = if let Some(s) = self.servers.get(&endpoint.guid) {
+                                        format!("127.0.0.1:{}", s.port)
+                                    } else {
+                                        format!("{}:{}", client.local_addr, client.local_port)
+                                    };
+
+                                    // Immediately start handling the data channel
+                                    let data_channels = self.data_channels.clone();
+                                    let protocol: Protocol = client.local_proto.try_into().unwrap();
+
+                                    tokio::spawn(async move {
+                                        let res = if protocol == Protocol::Udp {
+                                            handle_udp_data_channel(
+                                                channel_id,
+                                                local_addr,
+                                                command_tx2.clone(),
+                                                data_rx
+                                            ).await
+                                        } else {
+                                            handle_tcp_data_channel(
+                                                channel_id,
+                                                local_addr,
+                                                command_tx2.clone(),
+                                                data_rx
+                                            ).await
+                                        };
+                                        match res {
+                                            Ok(true) => {
+                                                debug!("Data channel {} closed by client", channel_id);
+                                                command_tx2.send(Message::DataChannelEof(DataChannelEof { channel_id, error: String::new() })).await.ok();
+                                            }
+                                            Ok(false) => {
+                                                error!("Data channel {} closed by server", channel_id);
+                                            }
+                                            Err(err) => {
+                                                error!("Error handling data channel {}: {:?}", channel_id, err);
+                                                command_tx2.send(Message::DataChannelEof(DataChannelEof { channel_id, error: err.to_string()})).await.ok();
+                                            }
+                                        };
+                                        data_channels.write().remove(&channel_id);
+                                    });
+                                },
+
+                                Message::DataChannelData(data) => {
+                                    // Forward data to the appropriate data channel
+                                    let data_tx = {
+                                        let channels = self.data_channels.read();
+                                        channels.get(&data.channel_id).map(|ch| ch.data_tx.clone())
+                                    };
+                                    if let Some(tx) = data_tx {
+                                        if let Err(err) = tx.send(Data {
+                                            data: data.data.into(),
+                                            socket_addr: None
+                                        }).await {
+                                            self.data_channels.write().remove(&data.channel_id);
+                                            error!("Error send to data channel {}: {:?}", data.channel_id, err);
+                                        }
+                                    } else {
+                                        error!("Data channel {} not found, dropping data", data.channel_id);
+                                    }
+                                },
+
+                                Message::DataChannelDataUdp(data) => {
+                                    // Forward UDP data to the appropriate data channel
+                                    let data_tx = {
+                                        let channels = self.data_channels.read();
+                                        channels.get(&data.channel_id).map(|ch| ch.data_tx.clone())
+                                    };
+                                    if let Some(tx) = data_tx {
+                                        let socket_addr = data.socket_addr.as_ref()
+                                            .map(proto_to_socket_addr)
+                                            .transpose()
+                                            .unwrap_or_else(|err| {
+                                                error!("Invalid socket address for UDP data channel {}: {:?}", data.channel_id, err);
+                                                None
+                                            });
+
+                                        if let Err(err) = tx.send(Data {
+                                            data: data.data.into(),
+                                            socket_addr,
+                                        }).await {
+                                            self.data_channels.write().remove(&data.channel_id);
+                                            error!("Error send to UDP data channel {}: {:?}", data.channel_id, err);
+                                        }
+                                    } else {
+                                        error!("UDP Data channel {} not found, dropping data", data.channel_id);
+                                    }
+                                },
+
+                                Message::DataChannelEof(eof) => {
+                                    // Signal EOF by dropping the data channel
+                                    self.data_channels.write().remove(&eof.channel_id);
+                                    if eof.error.is_empty() {
+                                        // Normal EOF without error
+                                        debug!("Data channel {} closed by server", eof.channel_id);
+                                    } else {
+                                        // EOF with error
+                                        error!("Data channel {} closed by server with error: {}", eof.channel_id, eof.error);
+                                    }
+                                },
+
+                                Message::HeartBeat(_) => {
+                                    conn.send_message(&Message::HeartBeat(HeartBeat{})).await.context("Failed to send heartbeat")?;
+                                },
+                                v => {
+                                    result_tx.send(v).await.context("Can't send server message")?;
                                 }
-                                debug!("Data channel shutdown");
-                            });
+                            }
                         },
-                        Message::HeartBeat(_) => {
-                            write_message(&mut conn, &Message::HeartBeat(HeartBeat{})).await.context("Failed to send heartbeat")?;
-                        },
-                        v => {
-                            result_tx.send(v).context("Can't send server message")?;
+                        None => {
+                            debug!("Connection closed by server");
+                            break;
                         }
                     }
                 },
@@ -410,252 +514,204 @@ impl<T: 'static + Transport> Client<T> {
         info!("Control channel shutdown");
         result_tx
             .send(Message::ConnectState(ConnectState::Disconnected.into()))
+            .await
             .context("Can't send Disconnected event")?;
         Ok(())
     }
 }
 
-async fn do_data_channel_handshake<T: Transport>(service: Service<T>) -> Result<T::Stream> {
-    // Retry at least every 100ms, at most for 10 seconds
-    let backoff = ExponentialBackoff {
-        max_interval: Duration::from_millis(100),
-        max_elapsed_time: Some(Duration::from_secs(10)),
-        ..Default::default()
-    };
+// This function is no longer needed as we handle data channels differently
 
-    // Connect to remote_addr
-    let mut conn: T::Stream = retry_notify(
-        backoff,
-        || async {
-            service
-                .connector
-                .connect(&service.remote_addr)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to handshake data channel to {}",
-                        &service.remote_addr
-                    )
-                })
-                .map_err(backoff::Error::transient)
-        },
-        |e, duration| {
-            warn!("{:#}. Retry in {:?}", e, duration);
-        },
-    )
-    .await
-    .context("Failed to connect to the data remote address")?;
+async fn handle_tcp_data_channel(
+    channel_id: u32,
+    local_addr: String,
+    sender: mpsc::Sender<Message>,
+    mut data_rx: mpsc::Receiver<Data>,
+) -> Result<bool> {
+    debug!(
+        "Handling client data channel {} to {}",
+        channel_id, local_addr
+    );
 
-    T::hint(&conn, service.socket_opts);
-
-    let hello = Message::DataChannelHello(DataChannelInfo {
-        agent_id: service.agent_id.clone(),
-        guid: service.endpoint.guid.clone(),
-    });
-    write_message(&mut conn, &hello)
+    // Connect to local service immediately
+    let mut local_stream = TcpStream::connect(&local_addr)
         .await
-        .context("Failed to send data hello message")?;
-    Ok(conn)
-}
+        .with_context(|| format!("Failed to connect to local service at {}", local_addr))?;
 
-#[instrument]
-async fn run_data_channel<T: Transport>(service: Service<T>) -> Result<()> {
-    // Do the handshake
-    let mut conn = do_data_channel_handshake(service.clone())
-        .await
-        .context("Failed to handshake data channel")?;
+    // Set TCP_NODELAY for low latency
+    local_stream
+        .set_nodelay(true)
+        .context("Failed to set TCP_NODELAY")?;
 
-    let client = service.endpoint.client.as_ref().unwrap();
-    let (local_addr, local_port) = (client.local_addr.clone(), client.local_port as u16);
-
-    tokio::select! {
-    // Forward
-        msg = read_message(&mut conn) => {
-            match msg {
-                Ok(Message::StartForwardTcp(_)) => {
-                    run_data_channel_for_tcp::<T>(conn,  &local_addr, local_port).await.context("Failed to run TCP data channel")?;
-                }
-                Ok(Message::StartForwardUdp(_)) => {
-                    run_data_channel_for_udp::<T>(conn, &local_addr, local_port).await.context("Failed to run UDP data channel")?;
-                }
-                Ok(msg) => {
-                    warn!("Unexpected data channel message: {:?}", msg);
-                }
-                Err(e) => {
-                    return Err(e)
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-// Simply copying back and forth for TCP
-async fn run_data_channel_for_tcp<T: Transport>(
-    mut conn: T::Stream,
-    local_addr: &str,
-    local_port: u16,
-) -> Result<()> {
-    debug!("New data channel starts forwarding");
-
-    let mut local = TcpStream::connect(format!("{}:{}", local_addr, local_port))
-        .await
-        .with_context(|| format!("Failed to local connect to {}:{}", local_addr, local_port))?;
-
-    tokio::select! {
-        _ = copy_bidirectional(&mut conn, &mut local) => {
-            debug!("Remote -> Local done");
-        },
-    }
-
-    Ok(())
-}
-
-// Things get a little tricker when it gets to UDP because it's connection-less.
-// A UdpPortMap must be maintained for recent seen incoming address, giving them
-// each a local port, which is associated with a socket. So just the sender
-// to the socket will work fine for the map's value.
-type UdpPortMap = Arc<tokio::sync::RwLock<HashMap<SocketAddr, mpsc::Sender<Bytes>>>>;
-
-async fn run_data_channel_for_udp<T: Transport>(
-    conn: T::Stream,
-    local_addr: &str,
-    local_port: u16,
-) -> Result<()> {
-    debug!("New data channel starts forwarding");
-
-    let port_map: UdpPortMap = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
-
-    // The channel stores UdpTraffic that needs to be sent to the server
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<UdpTraffic>(UDP_SENDQ_SIZE);
-
-    // FIXME: https://github.com/tokio-rs/tls/issues/40
-    // Maybe this is our concern
-    let (mut rd, mut wr) = io::split(conn);
-
-    // Keep sending items from the outbound channel to the server
-    tokio::spawn(async move {
-        while let Some(t) = outbound_rx.recv().await {
-            trace!("outbound {:?}", t);
-            if let Err(e) = t
-                .write(&mut wr)
-                .await
-                .with_context(|| "Failed to forward UDP traffic to the server")
-            {
-                debug!("{:?}", e);
-                break;
-            }
-        }
-    });
-
-    loop {
-        // Read a packet from the server
-        let hdr_len = rd.read_u8().await?;
-        let packet = UdpTraffic::read(&mut rd, hdr_len)
-            .await
-            .with_context(|| "Failed to read UDPTraffic from the server")?;
-        let m = port_map.read().await;
-
-        if m.get(&packet.from).is_none() {
-            // This packet is from a address we don't see for a while,
-            // which is not in the UdpPortMap.
-            // So set up a mapping (and a forwarder) for it
-
-            // Drop the reader lock
-            drop(m);
-
-            // Grab the writer lock
-            // This is the only thread that will try to grab the writer lock
-            // So no need to worry about some other thread has already set up
-            // the mapping between the gap of dropping the reader lock and
-            // grabbing the writer lock
-            let mut m = port_map.write().await;
-
-            match udp_connect(format!("{}:{}", local_addr, local_port)).await {
-                Ok(s) => {
-                    let (inbound_tx, inbound_rx) = mpsc::channel(UDP_SENDQ_SIZE);
-                    m.insert(packet.from, inbound_tx);
-                    tokio::spawn(run_udp_forwarder(
-                        s,
-                        inbound_rx,
-                        outbound_tx.clone(),
-                        packet.from,
-                        port_map.clone(),
-                    ));
-                }
-                Err(e) => {
-                    error!("{:#}", e);
-                }
-            }
-        }
-
-        // Now there should be a udp forwarder that can receive the packet
-        let m = port_map.read().await;
-        if let Some(tx) = m.get(&packet.from) {
-            let _ = tx.send(packet.data).await;
-        }
-    }
-}
-
-// Run a UdpSocket for the visitor `from`
-#[instrument(skip_all, fields(from))]
-async fn run_udp_forwarder(
-    s: UdpSocket,
-    mut inbound_rx: mpsc::Receiver<Bytes>,
-    outbount_tx: mpsc::Sender<UdpTraffic>,
-    from: SocketAddr,
-    port_map: UdpPortMap,
-) -> Result<()> {
-    debug!("Forwarder created");
-    let mut buf = BytesMut::new();
-    buf.resize(UDP_BUFFER_SIZE, 0);
+    let mut buf = [0u8; 16384]; // Smaller buffer for low latency
 
     loop {
         tokio::select! {
-            // Receive from the server
-            data = inbound_rx.recv() => {
-                if let Some(data) = data {
-                    s.send(&data).await.with_context(|| "Failed to send UDP traffic to the service")?;
-                } else {
-                    break;
+            res = local_stream.read(&mut buf) => {
+                match res {
+                    Ok(0) => {
+                        return Ok(true)
+                    },
+                    Ok(n) => {
+                        sender.send(Message::DataChannelData(DataChannelData {
+                            channel_id,
+                            data: buf[0..n].to_vec()
+                        }))
+                        .await
+                        .context("Failed to send data to server")?;
+                    },
+                    Err(e) => {
+                        return Err(e).context("Local service read error");
+                    }
                 }
-            },
+            }
 
-            // Receive from the service
-            val = s.recv(&mut buf) => {
-                let len = match val {
-                    Ok(v) => v,
-                    Err(_) => break
-                };
-
-                let t = UdpTraffic{
-                    from,
-                    data: Bytes::copy_from_slice(&buf[..len])
-                };
-
-                outbount_tx.send(t).await.with_context(|| "Failed to send UDP traffic to the server")?;
-            },
-
-            // No traffic for the duration of UDP_TIMEOUT, clean up the state
-            _ = time::sleep(Duration::from_secs(UDP_TIMEOUT)) => {
-                break;
+            // Receive data from server via control channel and write to local service
+            data_result = data_rx.recv() => {
+                match data_result {
+                    Some(data) => {
+                        trace!("Received {} bytes from server for channel {}", data.data.len(), channel_id);
+                        local_stream.write_all(&data.data).await.context("Failed to write data to local service")?;
+                    },
+                    None => {
+                        debug!("EOF received from server for channel {}", channel_id);
+                        return Ok(false)
+                    }
+                }
             }
         }
     }
+}
 
-    let mut port_map = port_map.write().await;
-    port_map.remove(&from);
+async fn handle_udp_data_channel(
+    channel_id: u32,
+    local_addr: String,
+    sender: mpsc::Sender<Message>,
+    mut data_rx: mpsc::Receiver<Data>,
+) -> Result<bool> {
+    debug!(
+        "Handling client UDP channel {} to {}",
+        channel_id, local_addr
+    );
 
-    debug!("Forwarder dropped");
-    Ok(())
+    // Bind local UDP socket to receive from any address
+    let local_socket = UdpSocket::bind("0.0.0.0:0")
+        .await
+        .with_context(|| "Failed to bind local UDP socket")?;
+
+    // Parse target address for forwarding
+    let target_addr: SocketAddr = local_addr
+        .to_socket_addrs()
+        .context("Failed to resolve local address")?
+        .next()
+        .with_context(|| format!("Invalid local address: {}", local_addr))?;
+
+    // Initialize routing table with 5 minute session timeout
+    let mut routing_table = UdpRoutingTable::<SocketAddr>::new(300);
+    let mut buf = [0u8; 65536];
+    let mut cleanup_interval = tokio::time::interval(Duration::from_secs(60));
+
+    // Track the last external address that sent data, for simple UDP echo services
+    let mut last_external_addr: Option<SocketAddr> = None;
+
+    loop {
+        tokio::select! {
+            // Read from local UDP service
+            result = local_socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((len, from_addr)) => {
+                        // Determine which external address this response should go to
+                        let external_addr = if from_addr == target_addr {
+                            // Response from the main service address - use the last external address
+                            // that sent us data (for simple echo services)
+                            if let Some(addr) = last_external_addr {
+                                addr
+                            } else {
+                                // No previous external address, this shouldn't happen in normal flow
+                                warn!("Received response from {} but no external address tracked", from_addr);
+                                target_addr
+                            }
+                        } else {
+                            // Check if we have a mapping for this specific local address
+                            if let Some(ext_addr) = routing_table.get_external_addr(&from_addr) {
+                                routing_table.update_activity(&from_addr, false);
+                                ext_addr
+                            } else {
+                                // New local connection - register it
+                                routing_table.register_client_session(from_addr, target_addr, target_addr);
+                                from_addr
+                            }
+                        };
+
+                        trace!("Received {} bytes from {} (mapped to {}) for UDP channel {} (sessions: {})",
+                               len, from_addr, external_addr, channel_id, routing_table.session_count());
+
+                        sender.send(Message::DataChannelDataUdp(DataChannelDataUdp {
+                            channel_id,
+                            data: buf[..len].to_vec(),
+                            socket_addr: Some(socket_addr_to_proto(&external_addr)),
+                        })).await.context("Failed to send data to server")?;
+                    },
+                    Err(e) => {
+                        return Err(e).context("Failed to read from local UDP service");
+                    }
+                }
+            },
+
+            // Receive data from server via control channel
+            data_result = data_rx.recv() => {
+                match data_result {
+                    Some(data) => {
+                        let external_addr = data.socket_addr.unwrap();
+
+                        // Track this as the last external address for simple echo responses
+                        last_external_addr = Some(external_addr);
+
+                        // Look up the local address for this external address
+                        let local_target = if let Some(local_data) = routing_table.get_local_data(&external_addr) {
+                            let local_data = *local_data;
+                            routing_table.update_activity(&external_addr, true);
+                            local_data
+                        } else {
+                            // New session from server - register it
+                            routing_table.register_session(external_addr, target_addr);
+                            target_addr
+                        };
+
+                        trace!("Received {} bytes from {} (routing to {}) for UDP channel {} (sessions: {})",
+                               data.data.len(), external_addr, local_target, channel_id, routing_table.session_count());
+
+                        // Forward to appropriate local address
+                        if let Err(e) = local_socket.send_to(&data.data, local_target).await {
+                            error!("Failed to send data to local UDP service at {}: {:#}", local_target, e);
+                            // Don't break the loop for individual send failures
+                        }
+                    },
+                    None => {
+                        debug!("EOF received from server for UDP channel {}", channel_id);
+                        return Ok(false)
+                    }
+                }
+            }
+
+            // Periodic cleanup of expired sessions
+            _ = cleanup_interval.tick() => {
+                let cleaned = routing_table.cleanup_expired_sessions();
+                if cleaned > 0 {
+                    debug!("UDP client channel {}: cleaned {} expired sessions, {} active sessions remain",
+                           channel_id, cleaned, routing_table.session_count());
+                }
+            }
+        }
+    }
 }
 
 // The entrypoint of running a client
 async fn setup_plugin(
     protocol: Protocol,
-    config: Arc<RwLock<ClientConfig>>,
-    command_rx: broadcast::Receiver<Message>,
-    result_tx: broadcast::Sender<Message>,
+    config: &Arc<RwLock<ClientConfig>>,
+    command_rx: &mut mpsc::Receiver<Message>,
+    result_tx: &mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
     match protocol {
         #[cfg(feature = "plugins")]
@@ -677,15 +733,28 @@ async fn setup_plugin(
     }
 }
 
-async fn handle_endpoint_start(
-    protocol: Protocol,
-    config: Arc<RwLock<ClientConfig>>,
-    command_rx: broadcast::Receiver<Message>,
-    result_tx: broadcast::Sender<Message>,
-    command_tx2: mpsc::Sender<Message>,
-    client: common::protocol::ClientEndpoint,
-) -> anyhow::Result<()> {
-    let err = setup_plugin(protocol, config, command_rx, result_tx.clone()).await;
+async fn handle_endpoint_ack(
+    endpoint: &ServerEndpoint,
+    config: &Arc<RwLock<ClientConfig>>,
+    command_rx: &mut mpsc::Receiver<Message>,
+    result_tx: &mpsc::Sender<Message>,
+    servers: &mut HashMap<String, SubProcess>,
+) -> Result<()> {
+    let protocol: Protocol = endpoint
+        .client
+        .as_ref()
+        .unwrap()
+        .local_proto
+        .try_into()
+        .context("Unsupported protocol")?;
+    debug!("Publish service: {:?}", endpoint);
+
+    if !endpoint.error.is_empty() {
+        error!("Endpoint error: {}", endpoint.error);
+        return Ok(());
+    }
+
+    let err = setup_plugin(protocol, config, command_rx, result_tx).await;
 
     if let Err(err) = err {
         error!("{:?}", err);
@@ -694,39 +763,72 @@ async fn handle_endpoint_start(
                 kind: ErrorKind::Fatal.into(),
                 message: err.to_string(),
             }))
+            .await
             .context("Can't send Error event")?;
+        return Err(err);
     }
-    command_tx2
-        .send(Message::EndpointStart(client))
-        .await
-        .context("Failed to send EndpointStart message")?;
+
+    let res: Option<anyhow::Result<SubProcess>> = match protocol {
+        #[cfg(feature = "plugins")]
+        Protocol::OneC | Protocol::Minecraft | Protocol::Webdav => {
+            if let Some(plugin) = PluginRegistry::new().get(protocol) {
+                Some(plugin.publish(endpoint, config, result_tx).await)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    match res {
+        Some(Ok(p)) => {
+            let port = p.port;
+            servers.insert(endpoint.guid.clone(), p);
+
+            let now = Instant::now();
+            while is_tcp_port_available("0.0.0.0", port)
+                .await
+                .context("Check port availability")?
+            {
+                if now.elapsed() > Duration::from_secs(60) {
+                    result_tx
+                        .send(Message::Error(ErrorInfo {
+                            kind: ErrorKind::Fatal.into(),
+                            message:
+                                "Не удалось запустить сервер за 60 секунд. Проверьте логи сервера."
+                                    .to_string(),
+                        }))
+                        .await
+                        .context("Can't send Error event")?;
+                    break;
+                }
+                debug!("Waiting for server to start on port {}", port);
+                time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        Some(Err(err)) => {
+            error!("{:?}", err);
+            result_tx
+                .send(Message::Error(ErrorInfo {
+                    kind: ErrorKind::Fatal.into(),
+                    message: err.to_string(),
+                }))
+                .await
+                .context("Can't send Error event")?;
+            return Err(err);
+        }
+        None => {}
+    }
+
     Ok(())
 }
 
 pub async fn run_client(
     config: Arc<RwLock<ClientConfig>>,
-    command_rx: broadcast::Receiver<Message>,
-    result_tx: broadcast::Sender<Message>,
+    command_rx: mpsc::Receiver<Message>,
+    result_tx: mpsc::Sender<Message>,
 ) -> Result<()> {
-    let transport_type = config.read().transport.transport_type;
-    match transport_type {
-        TransportType::Tcp => {
-            let mut client = Client::<TcpTransport>::from(config)
-                .await
-                .context("Failed to create TCP client")?;
-            client.run(command_rx, result_tx).await
-        }
-        TransportType::Tls => {
-            let mut client = Client::<TlsTransport>::from(config)
-                .await
-                .context("Failed to create TLS client")?;
-            client.run(command_rx, result_tx).await
-        }
-        TransportType::Websocket => {
-            let mut client = Client::<WebsocketTransport>::from(config)
-                .await
-                .context("Failed to create Websocket client")?;
-            client.run(command_rx, result_tx).await
-        }
-    }
+    let mut client = Client::<WebsocketTransport>::from(config)
+        .await
+        .context("Failed to create Websocket client")?;
+    client.run(command_rx, result_tx).await
 }

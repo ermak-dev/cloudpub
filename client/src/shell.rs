@@ -19,16 +19,16 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use walkdir::WalkDir;
-#[cfg(feature = "zip")]
 use zip::read::ZipArchive;
 
 pub const DOWNLOAD_SUBDIR: &str = "download";
 
 pub struct SubProcess {
-    shutdown_tx: broadcast::Sender<Message>,
+    shutdown_tx: mpsc::Sender<Message>,
+    pub port: u16,
 }
 
 impl SubProcess {
@@ -37,17 +37,19 @@ impl SubProcess {
         args: Vec<String>,
         chdir: Option<PathBuf>,
         envs: HashMap<String, String>,
-        result_tx: broadcast::Sender<Message>,
+        result_tx: mpsc::Sender<Message>,
+        port: u16,
     ) -> Self {
-        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         tokio::spawn(async move {
-            if let Err(err) = execute(command, args, chdir, envs, None, shutdown_rx).await {
+            if let Err(err) = execute(command, args, chdir, envs, None, &mut shutdown_rx).await {
                 error!("Failed to execute command: {:?}", err);
                 result_tx
                     .send(Message::Error(ErrorInfo {
                         kind: ErrorKind::Fatal.into(),
                         message: err.to_string(),
                     }))
+                    .await
                     .ok();
             } else {
                 result_tx
@@ -55,19 +57,21 @@ impl SubProcess {
                         kind: ErrorKind::Fatal.into(),
                         message: crate::t!("error-process-terminated"),
                     }))
+                    .await
                     .ok();
             }
         });
-        Self { shutdown_tx }
+        Self { shutdown_tx, port }
     }
 
     pub fn stop(&mut self) {
-        self.shutdown_tx.send(Message::Break(Break {})).ok();
+        self.shutdown_tx.try_send(Message::Break(Break {})).ok();
     }
 }
 
 impl Drop for SubProcess {
     fn drop(&mut self) {
+        info!("Drop subprocess");
         self.stop();
     }
 }
@@ -77,7 +81,7 @@ pub async fn send_progress(
     template: &str,
     total: u64,
     current: u64,
-    progress_tx: broadcast::Sender<Message>,
+    progress_tx: &mpsc::Sender<Message>,
 ) {
     let progress = ProgressInfo {
         message: message.to_string(),
@@ -85,7 +89,7 @@ pub async fn send_progress(
         total: total as u32,
         current: current as u32,
     };
-    progress_tx.send(Message::Progress(progress)).ok();
+    progress_tx.send(Message::Progress(progress)).await.ok();
 }
 
 pub async fn execute(
@@ -93,8 +97,8 @@ pub async fn execute(
     args: Vec<String>,
     chdir: Option<PathBuf>,
     envs: HashMap<String, String>,
-    progress: Option<(String, broadcast::Sender<Message>, u64)>,
-    mut shutdown_rx: broadcast::Receiver<Message>,
+    progress: Option<(String, mpsc::Sender<Message>, u64)>,
+    shutdown_rx: &mut mpsc::Receiver<Message>,
 ) -> Result<()> {
     info!(
         "Executing command: {} {}",
@@ -102,12 +106,14 @@ pub async fn execute(
         args.join(" ")
     );
 
+    info!("Environment: {:?}", envs);
+
     let template = crate::t!("progress-files-eta");
     let chdir = chdir.as_deref().unwrap_or(Path::new("."));
 
     if let Some((message, tx, total)) = progress.as_ref() {
-        send_progress(message, &template, *total, 0, tx.clone()).await;
-        send_progress(message, &template, *total, 1, tx.clone()).await;
+        send_progress(message, &template, *total, 0, tx).await;
+        send_progress(message, &template, *total, 1, tx).await;
     }
 
     #[cfg(windows)]
@@ -159,7 +165,7 @@ pub async fn execute(
                         info!("STDOUT: {}", line);
                         current += 1;
                         if let Some((message, tx, total)) = progress.as_ref() {
-                            send_progress(message, &template_clone, *total, current, tx.clone()).await;
+                            send_progress(message, &template_clone, *total, current, tx).await;
                         }
                     }
                     Err(e) => {
@@ -175,7 +181,7 @@ pub async fn execute(
                         warn!("STDERR: {}", line);
                         current += 1;
                         if let Some((message, tx, total)) = progress.as_ref() {
-                            send_progress(message, &template_clone, *total, current, tx.clone()).await;
+                            send_progress(message, &template_clone, *total, current, tx).await;
                         }
                     },
                     Err(e) => {
@@ -196,19 +202,19 @@ pub async fn execute(
             let status = status.context("Failed to wait on child")?;
             if !status.success() {
                 if let Some((message, tx, total)) = progress.as_ref() {
-                    send_progress(message, &template, *total, *total, tx.clone()).await;
+                    send_progress(message, &template, *total, *total, tx).await;
                 }
                 bail!("Command failed: {:?}", status);
             }
         }
 
         cmd = shutdown_rx.recv() => match cmd {
-            Ok(Message::Stop(_)) | Ok(Message::Break(_)) => {
+            Some(Message::Stop(_)) | Some(Message::Break(_)) => {
                 info!("Received break command, killing child process");
                 child.kill().await.ok();
             }
-            Err(e) => {
-                info!("Command channel error, killing child process: {:?}", e);
+            None => {
+                info!("Command channel closed, killing child process");
                 child.kill().await.ok();
             }
             _ => {}
@@ -216,20 +222,19 @@ pub async fn execute(
     }
 
     if let Some((message, tx, total)) = progress.as_ref() {
-        send_progress(message, &template, *total, *total, tx.clone()).await;
+        send_progress(message, &template, *total, *total, tx).await;
     }
     info!("Command executed successfully");
 
     Ok(())
 }
 
-#[cfg(feature = "zip")]
-pub fn unzip(
+pub async fn unzip(
     message: &str,
     zip_file_path: &Path,
     extract_dir: &Path,
     skip: usize,
-    result_tx: broadcast::Sender<Message>,
+    result_tx: &mpsc::Sender<Message>,
 ) -> Result<()> {
     info!("Unzipping {:?} to {:?}", zip_file_path, extract_dir);
     let file = File::open(zip_file_path)?;
@@ -247,7 +252,10 @@ pub fn unzip(
         current: 0,
     };
 
-    result_tx.send(Message::Progress(progress.clone())).ok();
+    result_tx
+        .send(Message::Progress(progress.clone()))
+        .await
+        .ok();
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -272,11 +280,19 @@ pub fn unzip(
         }
 
         progress.current = (i + 1) as u32;
-        if progress.current % 100 == 0 || progress.current == progress.total {
-            result_tx.send(Message::Progress(progress.clone())).ok();
+        if progress.current % 100 == 0 {
+            result_tx
+                .send(Message::Progress(progress.clone()))
+                .await
+                .ok();
         }
     }
 
+    progress.current = progress.total;
+    result_tx
+        .send(Message::Progress(progress.clone()))
+        .await
+        .ok();
     Ok(())
 }
 
@@ -285,8 +301,8 @@ pub async fn download(
     config: Arc<RwLock<ClientConfig>>,
     url: &str,
     path: &Path,
-    mut command_rx: broadcast::Receiver<Message>,
-    result_tx: broadcast::Sender<Message>,
+    command_rx: &mut mpsc::Receiver<Message>,
+    result_tx: &mpsc::Sender<Message>,
 ) -> Result<()> {
     info!("Downloading {} to {:?}", url, path);
 
@@ -309,6 +325,11 @@ pub async fn download(
         .send()
         .await
         .context(format!("Failed to GET from '{}'", &url))?;
+
+    // Check if response status is 200 OK
+    if !res.status().is_success() {
+        bail!("HTTP request failed with status: {}", res.status());
+    }
 
     // Indicatif setup
     let total_size = res
@@ -335,7 +356,10 @@ pub async fn download(
         current: 0,
     };
 
-    result_tx.send(Message::Progress(progress.clone())).ok();
+    result_tx
+        .send(Message::Progress(progress.clone()))
+        .await
+        .ok();
 
     // download chunks
     let mut file = File::create(path).context(format!("Failed to create file '{:?}'", path))?;
@@ -345,17 +369,16 @@ pub async fn download(
         tokio::select! {
             cmd = command_rx.recv() => {
                 match cmd {
-                    Ok(Message::Stop(_)) | Ok(Message::Break(_)) => {
+                    Some(Message::Stop(_)) | Some(Message::Break(_)) => {
                         info!("Download cancelled");
                         progress.total = total_size as u32;
-                        result_tx.send(Message::Progress(progress.clone())).ok();
+                        result_tx.send(Message::Progress(progress.clone())).await.ok();
                         bail!("Download cancelled");
                     }
-                    Err(err) => {
-                        error!("Command channel error: {:?}", err);
+                    None => {
                         progress.total = total_size as u32;
-                        result_tx.send(Message::Progress(progress.clone())).ok();
-                        bail!(err);
+                        result_tx.send(Message::Progress(progress.clone())).await.ok();
+                        bail!("Command channel closed");
                     }
                     _ => {}
                 }
@@ -370,7 +393,7 @@ pub async fn download(
                     let kb_new = progress.current / 1024;
                     // Throttle download progress
                     if kb_new > kb_current {
-                        result_tx.send(Message::Progress(progress.clone())).ok();
+                        result_tx.send(Message::Progress(progress.clone())).await.ok();
                     }
                 } else {
                     break;
@@ -380,7 +403,10 @@ pub async fn download(
     }
 
     progress.current = total_size as u32;
-    result_tx.send(Message::Progress(progress.clone())).ok();
+    result_tx
+        .send(Message::Progress(progress.clone()))
+        .await
+        .ok();
     Ok(())
 }
 

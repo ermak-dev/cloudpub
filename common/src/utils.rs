@@ -3,12 +3,21 @@ use backoff::backoff::Backoff;
 use backoff::Notify;
 use std::future::Future;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use tokio::net::{lookup_host, TcpListener, TcpSocket, ToSocketAddrs, UdpSocket};
 use tokio::sync::watch;
-use tracing::debug;
+use tracing::{debug, trace};
 
-use crate::protocol::ServerEndpoint;
+use crate::protocol::v2::message::Message as ProtocolMessage;
+use futures::future::{BoxFuture, FutureExt};
+
+pub fn box_future<F, T>(future: F) -> BoxFuture<'static, T>
+where
+    F: Future<Output = T> + Send + 'static,
+    T: 'static,
+{
+    future.boxed()
+}
 
 pub async fn to_socket_addr<A: ToSocketAddrs>(addr: A) -> Result<std::net::SocketAddr> {
     lookup_host(addr)
@@ -72,13 +81,6 @@ pub async fn find_free_udp_port() -> Result<u16> {
     Ok(port)
 }
 
-pub async fn free_port_for_bind(endpoint: &mut ServerEndpoint) -> Result<()> {
-    let client = endpoint.client.as_mut().unwrap();
-    client.local_port = find_free_tcp_port().await? as u32;
-    client.local_addr = "localhost".to_string();
-    Ok(())
-}
-
 pub async fn is_udp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
     match UdpSocket::bind((bind_addr, port)).await {
         Ok(_) => Ok(true),
@@ -90,7 +92,9 @@ pub async fn is_udp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
 pub async fn is_tcp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
     let tcp_socket = TcpSocket::new_v4()?;
     tcp_socket.set_reuseaddr(true).unwrap();
-    let bind_addr: SocketAddr = format!("{}:{}", bind_addr, port).parse().unwrap();
+    let bind_addr: SocketAddr = format!("{}:{}", bind_addr, port)
+        .parse()
+        .with_context(|| format!("Failed to parse bind address: {}:{}", bind_addr, port))?;
     debug!("Check port: {}", bind_addr);
     match tcp_socket.bind(bind_addr) {
         Ok(_) => Ok(true),
@@ -137,4 +141,82 @@ pub fn split_host_port(host_and_port: &str, default_port: u16) -> (String, u16) 
         default_port
     };
     (host, port)
+}
+
+pub fn socket_addr_to_proto(addr: &SocketAddr) -> crate::protocol::v2::SocketAddr {
+    match addr {
+        SocketAddr::V4(addr_v4) => crate::protocol::v2::SocketAddr {
+            addr: Some(crate::protocol::v2::socket_addr::Addr::V4(
+                crate::protocol::v2::SocketAddrV4 {
+                    ip: u32::from(*addr_v4.ip()),
+                    port: addr_v4.port() as u32,
+                },
+            )),
+        },
+        SocketAddr::V6(addr_v6) => crate::protocol::v2::SocketAddr {
+            addr: Some(crate::protocol::v2::socket_addr::Addr::V6(
+                crate::protocol::v2::SocketAddrV6 {
+                    ip: addr_v6.ip().octets().to_vec(),
+                    port: addr_v6.port() as u32,
+                    flowinfo: addr_v6.flowinfo(),
+                    scope_id: addr_v6.scope_id(),
+                },
+            )),
+        },
+    }
+}
+
+pub fn proto_to_socket_addr(proto_addr: &crate::protocol::v2::SocketAddr) -> Result<SocketAddr> {
+    match &proto_addr.addr {
+        Some(crate::protocol::v2::socket_addr::Addr::V4(v4)) => Ok(SocketAddr::V4(
+            SocketAddrV4::new(Ipv4Addr::from(v4.ip), v4.port as u16),
+        )),
+        Some(crate::protocol::v2::socket_addr::Addr::V6(v6)) => {
+            if v6.ip.len() == 16 {
+                let mut ip_bytes = [0u8; 16];
+                ip_bytes.copy_from_slice(&v6.ip);
+                Ok(SocketAddr::V6(SocketAddrV6::new(
+                    Ipv6Addr::from(ip_bytes),
+                    v6.port as u16,
+                    v6.flowinfo,
+                    v6.scope_id,
+                )))
+            } else {
+                Err(anyhow!(
+                    "Invalid IPv6 address length: expected 16 bytes, got {}",
+                    v6.ip.len()
+                ))
+            }
+        }
+        None => Err(anyhow!("Missing socket address")),
+    }
+}
+
+pub fn trace_message(label: &str, msg: &ProtocolMessage) {
+    match msg {
+        ProtocolMessage::DataChannelData(data) => {
+            //let data_str = String::from_utf8_lossy(&data.data);
+            trace!(
+                "{}: DataChannelData {{ channel_id: {}, data_size: {} bytes }}",
+                label,
+                data.channel_id,
+                data.data.len(),
+            );
+        }
+        ProtocolMessage::DataChannelDataUdp(data) => {
+            trace!(
+                "{}: DataChannelDataUdp {{ channel_id: {}, data_size: {} bytes, socket_addr: {:?} }}",
+                label,
+                data.channel_id,
+                data.data.len(),
+                data.socket_addr
+            );
+        }
+        ProtocolMessage::HeartBeat(_) => {
+            trace!("{}: HeartBeat", label);
+        }
+        _ => {
+            debug!("{}: {:?}", label, msg);
+        }
+    }
 }

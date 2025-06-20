@@ -6,7 +6,7 @@ use common::protocol::message::Message;
 use common::protocol::ServerEndpoint;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
@@ -16,16 +16,16 @@ pub trait Plugin: Send + Sync {
     /// Setup the plugin environment
     async fn setup(
         &self,
-        config: Arc<RwLock<ClientConfig>>,
-        command_rx: broadcast::Receiver<Message>,
-        result_tx: broadcast::Sender<Message>,
+        config: &Arc<RwLock<ClientConfig>>,
+        command_rx: &mut mpsc::Receiver<Message>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<()>;
 
     /// Publish a service using this plugin
     async fn publish(
         &self,
-        endpoint: &mut ServerEndpoint,
-        config: Arc<RwLock<ClientConfig>>,
-        result_tx: broadcast::Sender<Message>,
+        endpoint: &ServerEndpoint,
+        config: &Arc<RwLock<ClientConfig>>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess>;
 }

@@ -5,9 +5,14 @@ use crate::transport::{
 use crate::utils::host_port_pair;
 use std::fmt::Debug;
 use std::fs;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 
+use crate::protocol::v2::message::Message as ProtocolMessage;
+use crate::protocol::v2::{read_message, write_message};
+use crate::transport::ProtobufStream;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use p12::PFX;
@@ -192,7 +197,10 @@ impl Transport for TlsTransport {
 
     #[cfg(unix)]
     fn as_raw_fd(conn: &Self::Stream) -> RawFd {
-        TcpTransport::as_raw_fd(conn.get_ref().0)
+        match conn.get_ref().0 {
+            Stream::Tcp(ref tcp_stream) => tcp_stream.as_raw_fd(),
+            Stream::Unix(ref unix_stream) => unix_stream.as_raw_fd(),
+        }
     }
 
     fn hint(conn: &Self::Stream, opt: SocketOpts) {
@@ -224,7 +232,7 @@ impl Transport for TlsTransport {
     }
 
     async fn connect(&self, addr: &AddrMaybeCached) -> Result<Self::Stream> {
-        let conn = self.tcp.connect(addr).await?;
+        let conn = self.tcp.connect(addr).await?.into_stream();
 
         let connector = self.connector.as_ref().context("TLS connector is None")?;
 
@@ -244,4 +252,25 @@ impl Transport for TlsTransport {
 
 pub(crate) fn get_stream(s: &TlsStream<Stream>) -> &Stream {
     s.get_ref().0
+}
+
+#[async_trait]
+impl ProtobufStream for TlsStream<Stream> {
+    async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
+        match read_message(self).await {
+            Ok(msg) => Ok(Some(msg)),
+            Err(e) => {
+                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                    if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+                        return Ok(None);
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
+        write_message(self, msg).await
+    }
 }

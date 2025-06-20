@@ -24,6 +24,7 @@ Commands:
   get        Get configuration parameter value
   ping       Check ping to server
   service    Work with service
+  upgrade    Check and upgrade to the latest version
   help       Help
 
 Options:

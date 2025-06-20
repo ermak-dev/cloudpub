@@ -6,11 +6,10 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use common::protocol::message::Message;
 use common::protocol::ServerEndpoint;
-use common::utils::free_port_for_bind;
 use parking_lot::RwLock;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use xml::escape::escape_str_attribute;
 
 #[cfg(target_os = "windows")]
@@ -71,9 +70,9 @@ impl Plugin for OneCPlugin {
 
     async fn setup(
         &self,
-        config: Arc<RwLock<ClientConfig>>,
-        command_rx: broadcast::Receiver<Message>,
-        result_tx: broadcast::Sender<Message>,
+        config: &Arc<RwLock<ClientConfig>>,
+        command_rx: &mut mpsc::Receiver<Message>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
         let env = check_enviroment(config.clone())?;
         setup_httpd(config, command_rx, result_tx, env).await
@@ -81,9 +80,9 @@ impl Plugin for OneCPlugin {
 
     async fn publish(
         &self,
-        endpoint: &mut ServerEndpoint,
-        config: Arc<RwLock<ClientConfig>>,
-        result_tx: broadcast::Sender<Message>,
+        endpoint: &ServerEndpoint,
+        config: &Arc<RwLock<ClientConfig>>,
+        result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess> {
         let env = check_enviroment(config.clone())?;
 
@@ -127,7 +126,6 @@ impl Plugin for OneCPlugin {
         }
 
         let httpd_config = ONEC_CONFIG.replace("[[WSAP_MODULE]]", wsap.to_str().unwrap());
-        free_port_for_bind(endpoint).await?;
 
         start_httpd(
             endpoint,
@@ -135,7 +133,7 @@ impl Plugin for OneCPlugin {
             ONEC_SUBDIR,
             publish_dir.to_str().unwrap(),
             env,
-            result_tx,
+            result_tx.clone(),
         )
         .await
     }

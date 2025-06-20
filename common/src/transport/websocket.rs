@@ -1,20 +1,22 @@
 use core::result::Result;
 use std::io::{Error, ErrorKind};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 
 use super::{
-    AddrMaybeCached, Listener, NamedSocketAddr, SocketAddr, SocketOpts, Stream, TcpTransport,
-    Transport,
+    AddrMaybeCached, Listener, NamedSocketAddr, ProtobufStream, SocketAddr, SocketOpts, Stream,
+    TcpTransport, Transport,
 };
 use crate::config::TransportConfig;
 use anyhow::{anyhow, Context as _};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures_core::stream::Stream as AsyncStream;
-use futures_sink::Sink;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
+use crate::utils::trace_message;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 #[cfg(unix)]
@@ -27,8 +29,14 @@ use tokio_util::io::StreamReader;
 use tracing::{debug, error, trace};
 use url::Url;
 
+use futures_util::sink::{Sink, SinkExt};
+use futures_util::stream::StreamExt;
+
 #[cfg(feature = "rustls")]
 use super::tls::{get_stream, TlsStream, TlsTransport};
+
+use crate::protocol::v2::message::Message as ProtocolMessage;
+use crate::protocol::v2::ProstMessage;
 
 #[derive(Debug)]
 enum TransportStream {
@@ -99,6 +107,67 @@ struct StreamWrapper {
     inner: WebSocketStream<TransportStream>,
 }
 
+#[async_trait]
+impl ProtobufStream for StreamWrapper {
+    async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
+        match self.inner.next().await {
+            Some(Ok(Message::Binary(b))) => {
+                let msg = crate::protocol::v2::Message::decode(b.as_ref())
+                    .context("Failed to decode protobuf message")?;
+                let msg = msg
+                    .message
+                    .context("Message field is missing in the protobuf message")?;
+                trace_message("Recv", &msg);
+                Ok(Some(msg))
+            }
+            Some(Ok(Message::Close(_))) => {
+                debug!("WebSocket connection closed");
+                Ok(None)
+            }
+            Some(Ok(Message::Ping(data))) => {
+                debug!("Received ping, sending pong");
+                self.inner
+                    .send(Message::Pong(data))
+                    .await
+                    .context("Failed to send pong")?;
+                Ok(None)
+            }
+            Some(Ok(Message::Pong(_))) => {
+                debug!("Received pong");
+                Ok(None)
+            }
+            Some(Ok(Message::Text(_))) => {
+                error!("Received unexpected text message");
+                Err(anyhow!("Unexpected text message received"))
+            }
+            Some(Ok(m)) => {
+                error!("Received unexpected  message: {:?}", m);
+                Err(anyhow!("Unexpected  message received"))
+            }
+            None => Ok(None),
+            Some(Err(e)) => Err(anyhow!("WebSocket error: {}", e)),
+        }
+    }
+
+    async fn send_message(
+        &mut self,
+        msg: &crate::protocol::v2::message::Message,
+    ) -> anyhow::Result<()> {
+        trace_message("Send", msg);
+        let mut buf = BytesMut::new();
+        let msg = crate::protocol::v2::Message {
+            message: Some(msg.clone()),
+        };
+        msg.encode(&mut buf)
+            .context("Failed to encode protobuf message")?;
+        self.inner
+            .send(Message::Binary(buf.into()))
+            .await
+            .context("Failed to send WebSocket message")?;
+        Ok(())
+    }
+}
+
 impl AsyncStream for StreamWrapper {
     type Item = Result<Bytes, Error>;
 
@@ -128,11 +197,11 @@ impl AsyncStream for StreamWrapper {
 }
 
 #[derive(Debug)]
-pub struct WebsocketTunnel {
+pub struct WebsocketStream {
     inner: StreamReader<StreamWrapper, Bytes>,
 }
 
-impl AsyncRead for WebsocketTunnel {
+impl AsyncRead for WebsocketStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -142,7 +211,7 @@ impl AsyncRead for WebsocketTunnel {
     }
 }
 
-impl AsyncBufRead for WebsocketTunnel {
+impl AsyncBufRead for WebsocketStream {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
         Pin::new(&mut self.get_mut().inner).poll_fill_buf(cx)
     }
@@ -152,7 +221,7 @@ impl AsyncBufRead for WebsocketTunnel {
     }
 }
 
-impl AsyncWrite for WebsocketTunnel {
+impl AsyncWrite for WebsocketStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -184,6 +253,17 @@ impl AsyncWrite for WebsocketTunnel {
     }
 }
 
+#[async_trait]
+impl ProtobufStream for WebsocketStream {
+    async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
+        self.inner.get_mut().recv_message().await
+    }
+
+    async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
+        self.inner.get_mut().send_message(msg).await
+    }
+}
+
 #[derive(Debug)]
 enum SubTransport {
     #[cfg(feature = "rustls")]
@@ -202,7 +282,7 @@ pub struct WebsocketTransport {
 impl Transport for WebsocketTransport {
     type Acceptor = Listener;
     type RawStream = Stream;
-    type Stream = WebsocketTunnel;
+    type Stream = WebsocketStream;
 
     fn new(config: &TransportConfig) -> anyhow::Result<Self> {
         let wsconfig = config
@@ -232,7 +312,10 @@ impl Transport for WebsocketTransport {
 
     #[cfg(unix)]
     fn as_raw_fd(conn: &Self::Stream) -> RawFd {
-        TcpTransport::as_raw_fd(conn.inner.get_ref().inner.get_ref().get_tcpstream())
+        match conn.inner.get_ref().inner.get_ref().get_tcpstream() {
+            Stream::Tcp(tcp_stream) => tcp_stream.as_raw_fd(),
+            Stream::Unix(unix_stream) => unix_stream.as_raw_fd(),
+        }
     }
 
     async fn bind(&self, addr: NamedSocketAddr) -> anyhow::Result<Self::Acceptor> {
@@ -250,7 +333,9 @@ impl Transport for WebsocketTransport {
 
     async fn handshake(&self, conn: Self::RawStream) -> anyhow::Result<Self::Stream> {
         let tsream = match &self.sub {
-            SubTransport::Insecure(t) => TransportStream::Insecure(t.handshake(conn).await?),
+            SubTransport::Insecure(t) => {
+                TransportStream::Insecure(t.handshake(conn).await?.into_stream())
+            }
             #[cfg(feature = "rustls")]
             SubTransport::Secure(t) => TransportStream::Secure(t.handshake(conn).await?),
         };
@@ -271,14 +356,14 @@ impl Transport for WebsocketTransport {
 
         let wsstream = accept_hdr_async_with_config(tsream, callback, Some(self.conf)).await?;
 
-        let tun = WebsocketTunnel {
+        let tun = WebsocketStream {
             inner: StreamReader::new(StreamWrapper { inner: wsstream }),
         };
         Ok(tun)
     }
 
     async fn connect(&self, addr: &AddrMaybeCached) -> anyhow::Result<Self::Stream> {
-        let u = format!("wss://{}/endpoint/v2", &addr.addr.as_str());
+        let u = format!("wss://{}/endpoint/v3", &addr.addr.as_str());
         let url = match Url::parse(&u) {
             Ok(parsed_url) => parsed_url,
             Err(e) => {
@@ -287,7 +372,9 @@ impl Transport for WebsocketTransport {
             }
         };
         let tstream = match &self.sub {
-            SubTransport::Insecure(t) => TransportStream::Insecure(t.connect(addr).await?),
+            SubTransport::Insecure(t) => {
+                TransportStream::Insecure(t.connect(addr).await?.into_stream())
+            }
             #[cfg(feature = "rustls")]
             SubTransport::Secure(t) => TransportStream::Secure(t.connect(addr).await?),
         };
@@ -298,7 +385,7 @@ impl Transport for WebsocketTransport {
 
         debug!("Connected");
 
-        let tun = WebsocketTunnel {
+        let tun = WebsocketStream {
             inner: StreamReader::new(StreamWrapper { inner: wsstream }),
         };
         Ok(tun)

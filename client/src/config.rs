@@ -124,6 +124,7 @@ pub struct ClientConfig {
     pub one_c_publish_dir: Option<String>,
     pub minecraft_server: Option<String>,
     pub minecraft_java_opts: Option<String>,
+    pub minimize_to_tray_on_close: Option<bool>,
     pub hwid: Option<String>,
     pub transport: TransportConfig,
 }
@@ -240,6 +241,10 @@ impl ClientConfig {
                     self.minecraft_java_opts = Some(value.to_string())
                 }
             }
+            "minimize_to_tray_on_close" => {
+                let minimize = value.parse().context("Invalid boolean value")?;
+                self.minimize_to_tray_on_close = Some(minimize);
+            }
             _ => bail!("Unknown key: {}", key),
         }
         self.save()?;
@@ -263,6 +268,9 @@ impl ClientConfig {
             "1c_publish_dir" => Ok(self.one_c_publish_dir.clone().unwrap_or_default()),
             "minecraft_server" => Ok(self.minecraft_server.clone().unwrap_or_default()),
             "minecraft_java_opts" => Ok(self.minecraft_java_opts.clone().unwrap_or_default()),
+            "minimize_to_tray_on_close" => Ok(self
+                .minimize_to_tray_on_close
+                .map_or("false".to_string(), |v| v.to_string())),
             "unsafe_tls" => Ok(self.transport.tls.as_ref().map_or("".to_string(), |tls| {
                 tls.danger_ignore_certificate_verification
                     .map_or("".to_string(), |v| v.to_string())
@@ -293,6 +301,7 @@ impl Default for ClientConfig {
             one_c_publish_dir: None,
             minecraft_server: None,
             minecraft_java_opts: None,
+            minimize_to_tray_on_close: Some(true),
             transport: TransportConfig::default(),
             readonly: false,
             gui: false,

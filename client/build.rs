@@ -1,6 +1,5 @@
-use std::env;
-use std::fs;
 use std::path::Path;
+use std::{env, fs};
 
 fn main() {
     println!("cargo:rerun-if-changed=locales/");
@@ -32,4 +31,5 @@ fn main() {
 
     // Set a cfg flag for the locale
     println!("cargo:rustc-cfg=locale=\"{}\"", locale);
+    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_LANGUAGE");
 }

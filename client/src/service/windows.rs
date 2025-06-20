@@ -178,8 +178,6 @@ fn service_main(_arguments: Vec<OsString>) {
 }
 
 fn run_service() -> Result<()> {
-    use tokio::sync::broadcast;
-
     // Create a channel for sending stop commands
     let (stop_tx, _) = broadcast::channel::<()>(1);
     let stop_tx_clone = stop_tx.clone();
@@ -238,7 +236,7 @@ pub async fn run_app(stop_tx: broadcast::Sender<()>) {
     use crate::base::{init, main_loop, Cli};
     use crate::commands::Commands;
     use anyhow::Context;
-    use tokio::sync::broadcast;
+    use tokio::sync::mpsc;
 
     // Get config path from registry
     let config_path = WindowsServiceManager::get_config_path().unwrap_or_else(|_| {
@@ -261,7 +259,7 @@ pub async fn run_app(stop_tx: broadcast::Sender<()>) {
         }
     };
 
-    let (command_tx, command_rx) = broadcast::channel(1024);
+    let (command_tx, command_rx) = mpsc::channel(1024);
 
     // Create a task to handle the stop signal
     let command_tx_clone = command_tx.clone();
