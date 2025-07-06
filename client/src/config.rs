@@ -6,7 +6,8 @@ use std::fmt::{Debug, Display, Formatter};
 pub use common::config::{MaskedString, TransportConfig};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::fs::{self, create_dir_all};
+use std::fs::{self, create_dir_all, File};
+use std::io::Write;
 use std::path::PathBuf;
 use tracing::debug;
 use url::Url;
@@ -177,7 +178,9 @@ impl ClientConfig {
             debug!("Skipping saving the config in readonly mode");
         } else {
             let s = toml::to_string_pretty(self).context("Failed to serialize the config")?;
-            fs::write(&self.config_path, s).context("Failed to write the config")?;
+            let mut f = File::create(&self.config_path)?;
+            f.write_all(s.as_bytes())?;
+            f.sync_all()?;
         }
         Ok(())
     }

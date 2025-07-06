@@ -30,9 +30,9 @@ const JDK_URL: &str =
 #[cfg(target_os = "macos")]
 const JDK_URL: &str = "https://download.java.net/java/GA/jdk23/3c5b90190c68498b986a97f276efd28a/37/GPL/openjdk-23_macos-x64_bin.tar.gz";
 
-// Minecraft server 1.21.4
+// Minecraft server 1.21.6
 const MINECRAFT_SERVER_URL: &str =
-    "https://piston-data.mojang.com/v1/objects/4707d00eb834b446575d89a61a11b5d548d8c001/server.jar";
+    "https://piston-data.mojang.com/v1/objects/6e64dcabba3c01a7271b4fa6bd898483b794c59b/server.jar";
 
 const MINECRAFT_SERVER_CFG: &str = include_str!("server.properties");
 

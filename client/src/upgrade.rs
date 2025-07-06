@@ -302,7 +302,7 @@ pub fn install_msi_package(msi_path: &std::path::Path) -> Result<()> {
 timeout /t 3 /nobreak >nul
 echo Installing MSI package...
 echo Requesting administrator privileges...
-powershell -Command "Start-Process msiexec -ArgumentList '/i \"{}\", '/quiet', '/norestart' -Verb RunAs -Wait"
+powershell -Command "Start-Process msiexec -ArgumentList '/i', '{}', '/quiet', '/norestart' -Verb RunAs -Wait"
 if errorlevel 1 (
     echo Failed to install MSI package
     exit /b 1

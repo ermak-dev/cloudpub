@@ -362,12 +362,10 @@ pub async fn main_loop(
 
             Message::EndpointStopAck(ep) => {
                 write_stdout(crate::t!("service-stopped", "guid" => ep.guid));
-                break;
             }
 
             Message::EndpointRemoveAck(ep) => {
                 write_stdout(crate::t!("service-removed", "guid" => ep.guid));
-                break;
             }
 
             Message::ConnectState(st) => match st.try_into().unwrap_or(ConnectState::Connecting) {

@@ -35,6 +35,7 @@ pub mod v2 {
     use bytes::BytesMut;
     pub use prost::Message as ProstMessage;
 
+    use crate::utils::get_version_number;
     use bytes::Bytes;
     use std::fmt::{self, Display, Formatter};
     use std::str::FromStr;
@@ -224,6 +225,20 @@ pub mod v2 {
                 )
             } else {
                 write!(f, "{} -> {}", client, self.error)
+            }
+        }
+    }
+
+    impl AgentInfo {
+        pub fn is_support_server_control(&self) -> bool {
+            get_version_number(&self.version) >= get_version_number("2.1.1")
+        }
+
+        pub fn get_unique_id(&self) -> String {
+            if self.hwid.is_empty() {
+                self.agent_id.clone()
+            } else {
+                self.hwid.clone()
             }
         }
     }
@@ -535,7 +550,8 @@ pub mod v1 {
             v2::ServerEndpoint {
                 id: se.id.unwrap_or_default(),
                 bind_addr: se.bind_addr,
-                status: se.status,
+                status: se.status.clone(),
+                default_status: se.status,
                 guid: se.guid,
                 remote_proto: v2::Protocol::from(se.remote_proto) as i32,
                 remote_addr: se.remote_addr,

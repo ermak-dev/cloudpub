@@ -5,15 +5,14 @@ use common::protocol::{
     AgentInfo, ConnectState, Data, DataChannelData, DataChannelDataUdp, DataChannelEof,
     EndpointRemove, EndpointStop, ErrorInfo, ErrorKind, HeartBeat, Protocol, ServerEndpoint,
 };
-use common::routing::UdpRoutingTable;
 use common::transport::{AddrMaybeCached, SocketOpts, Transport, WebsocketTransport};
 use common::utils::{
-    get_platform, is_tcp_port_available, proto_to_socket_addr, socket_addr_to_proto,
+    get_platform, is_tcp_port_available, proto_to_socket_addr, socket_addr_to_proto, udp_connect,
 };
 use common::version::VERSION;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -27,6 +26,7 @@ use futures::future::FutureExt;
 use crate::config::ClientConfig;
 use crate::shell::SubProcess;
 use crate::upgrade::handle_upgrade_available;
+use bytes::Bytes;
 use common::transport::ProtobufStream;
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 use std::fmt::{self, Debug, Formatter};
@@ -59,10 +59,11 @@ struct Client<T: Transport> {
     config: Arc<RwLock<ClientConfig>>,
     services: Services,
     transport: Arc<T>,
-    servers: HashMap<String, SubProcess>,
+    servers: Arc<RwLock<HashMap<String, SubProcess>>>,
     connected: bool,
-    // New fields for control channel data transfer
     data_channels: Arc<RwLock<HashMap<u32, DataChannel>>>,
+    // Used to break long running setup
+    break_command_tx: Option<mpsc::Sender<Message>>,
 }
 
 impl<T: 'static + Transport> Client<T> {
@@ -75,10 +76,11 @@ impl<T: 'static + Transport> Client<T> {
         Ok(Client {
             config,
             services: Default::default(),
-            servers: Default::default(),
+            servers: Arc::new(RwLock::new(Default::default())),
             transport,
             connected: false,
             data_channels: Arc::new(RwLock::new(HashMap::new())),
+            break_command_tx: None,
         })
     }
 
@@ -270,6 +272,7 @@ impl<T: 'static + Transport> Client<T> {
             .context("Can't send Connected event")?;
 
         let (command_tx2, mut command_rx2) = mpsc::channel::<Message>(1024);
+        // Used to break long running setup
 
         let heartbeat_timeout = config.read().heartbeat_timeout;
 
@@ -292,6 +295,7 @@ impl<T: 'static + Transport> Client<T> {
                                     guid: String::new(),
                                     client: Some(client.clone()),
                                     status: Some("offline".to_string()),
+                                    default_status: Some("online".to_string()),
                                     remote_proto: protocol.into(),
                                     remote_addr: String::new(),
                                     remote_port: 0,
@@ -312,7 +316,7 @@ impl<T: 'static + Transport> Client<T> {
                             Message::EndpointStop(ep) => {
                                 info!("Unpublishing service: {:?}", ep.guid);
                                 // Stop server process if needed
-                                self.servers.remove(&ep.guid);
+                                self.servers.write().remove(&ep.guid);
                                 let msg = Message::EndpointStop(EndpointStop { guid: ep.guid });
                                 conn.send_message(&msg).await.context("Failed to send message")?;
 
@@ -321,7 +325,7 @@ impl<T: 'static + Transport> Client<T> {
                             Message::EndpointRemove(ep) => {
                                 info!("Remove service: {:?}", ep.guid);
                                 // Stop server process if needed
-                                self.servers.remove(&ep.guid);
+                                self.servers.write().remove(&ep.guid);
                                 let msg = Message::EndpointRemove(EndpointRemove { guid: ep.guid });
                                 conn.send_message(&msg).await.context("Failed to send message")?;
                             }
@@ -343,9 +347,20 @@ impl<T: 'static + Transport> Client<T> {
                                     .context("Can't send Error event")?;
                                 }
                             }
-                            Message::Stop(_) => {
+                            Message::Stop(x) => {
                                 info!("Stopping the client");
+                                if let Some(break_command_tx) = self.break_command_tx.as_ref() {
+                                    break_command_tx.send(Message::Stop(x))
+                                        .await.ok();
+                                }
                                 break;
+                            }
+                            Message::Break(x) => {
+                                info!("Breaking operation");
+                                if let Some(break_command_tx) = self.break_command_tx.as_ref() {
+                                    break_command_tx.send(Message::Break(x))
+                                        .await.ok();
+                                }
                             }
                             cmd => {
                                 conn.send_message(&cmd).await.context("Failed to send message")?;
@@ -361,16 +376,25 @@ impl<T: 'static + Transport> Client<T> {
                         Some(val) => {
                             match val {
                                 Message::EndpointAck(endpoint) => {
-                                    // Start plugin server if needed
-                                    if !self.servers.contains_key(&endpoint.guid) {
-                                        if let Err(err) = handle_endpoint_ack(&endpoint, &config, &mut command_rx2, result_tx, &mut self.servers).await {
-                                            error!("Error handling endpoint ack: {:?}", err);
-                                            continue;
+                                    // Setup and start plugin
+                                    let result_tx = result_tx.clone();
+                                    let command_tx2 = command_tx2.clone();
+                                    let servers = self.servers.clone();
+                                    let config = config.clone();
+                                    let (break_command_tx, mut break_command_rx) = mpsc::channel::<Message>(1);
+                                    self.break_command_tx = Some(break_command_tx);
+                                    tokio::spawn(async move {
+                                        if !servers.read().contains_key(&endpoint.guid) {
+                                            if let Err(err) = handle_endpoint_ack(&endpoint, &config, &mut break_command_rx, &result_tx, servers.clone()).await {
+                                                error!("Error handling endpoint ack: {:?}", err);
+                                                servers.write().remove(&endpoint.guid);
+                                                command_tx2.send(Message::EndpointStop(EndpointStop {guid: endpoint.guid.clone()})).await.ok();
+                                            }
                                         }
-                                    }
-                                    result_tx.send(Message::EndpointAck(endpoint.clone()))
-                                        .await
-                                        .context("Can't send EndpointAck event")?;
+                                        result_tx.send(Message::EndpointAck(endpoint.clone()))
+                                            .await
+                                            .ok();
+                                    });
                                 }
 
                                 Message::CreateDataChannelWithId(create_msg) => {
@@ -390,7 +414,7 @@ impl<T: 'static + Transport> Client<T> {
 
                                     // Check if endpoint handled by plugin server
                                     let client = endpoint.client.unwrap();
-                                    let local_addr = if let Some(s) = self.servers.get(&endpoint.guid) {
+                                    let local_addr = if let Some(s) = self.servers.read().get(&endpoint.guid) {
                                         format!("127.0.0.1:{}", s.port)
                                     } else {
                                         format!("{}:{}", client.local_addr, client.local_port)
@@ -583,6 +607,12 @@ async fn handle_tcp_data_channel(
     }
 }
 
+// UDP port map for managing forwarders per remote address
+type UdpPortMap = Arc<tokio::sync::RwLock<HashMap<SocketAddr, mpsc::Sender<Bytes>>>>;
+
+const UDP_TIMEOUT: u64 = 300; // 5 minutes timeout for UDP forwarders
+const UDP_BUFFER_SIZE: usize = 65536;
+
 async fn handle_udp_data_channel(
     channel_id: u32,
     local_addr: String,
@@ -594,116 +624,122 @@ async fn handle_udp_data_channel(
         channel_id, local_addr
     );
 
-    // Bind local UDP socket to receive from any address
-    let local_socket = UdpSocket::bind("0.0.0.0:0")
-        .await
-        .with_context(|| "Failed to bind local UDP socket")?;
-
-    // Parse target address for forwarding
-    let target_addr: SocketAddr = local_addr
-        .to_socket_addrs()
-        .context("Failed to resolve local address")?
-        .next()
-        .with_context(|| format!("Invalid local address: {}", local_addr))?;
-
-    // Initialize routing table with 5 minute session timeout
-    let mut routing_table = UdpRoutingTable::<SocketAddr>::new(300);
-    let mut buf = [0u8; 65536];
-    let mut cleanup_interval = tokio::time::interval(Duration::from_secs(60));
-
-    // Track the last external address that sent data, for simple UDP echo services
-    let mut last_external_addr: Option<SocketAddr> = None;
+    let port_map: UdpPortMap = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
     loop {
-        tokio::select! {
-            // Read from local UDP service
-            result = local_socket.recv_from(&mut buf) => {
-                match result {
-                    Ok((len, from_addr)) => {
-                        // Determine which external address this response should go to
-                        let external_addr = if from_addr == target_addr {
-                            // Response from the main service address - use the last external address
-                            // that sent us data (for simple echo services)
-                            if let Some(addr) = last_external_addr {
-                                addr
-                            } else {
-                                // No previous external address, this shouldn't happen in normal flow
-                                warn!("Received response from {} but no external address tracked", from_addr);
-                                target_addr
-                            }
-                        } else {
-                            // Check if we have a mapping for this specific local address
-                            if let Some(ext_addr) = routing_table.get_external_addr(&from_addr) {
-                                routing_table.update_activity(&from_addr, false);
-                                ext_addr
-                            } else {
-                                // New local connection - register it
-                                routing_table.register_client_session(from_addr, target_addr, target_addr);
-                                from_addr
-                            }
-                        };
+        // Receive data from server via control channel
+        match data_rx.recv().await {
+            Some(data) => {
+                let external_addr = data.socket_addr.unwrap();
+                let m = port_map.read().await;
 
-                        trace!("Received {} bytes from {} (mapped to {}) for UDP channel {} (sessions: {})",
-                               len, from_addr, external_addr, channel_id, routing_table.session_count());
+                if m.get(&external_addr).is_none() {
+                    // This packet is from an address we haven't seen for a while,
+                    // which is not in the UdpPortMap.
+                    // So set up a mapping (and a forwarder) for it
 
-                        sender.send(Message::DataChannelDataUdp(DataChannelDataUdp {
-                            channel_id,
-                            data: buf[..len].to_vec(),
-                            socket_addr: Some(socket_addr_to_proto(&external_addr)),
-                        })).await.context("Failed to send data to server")?;
-                    },
-                    Err(e) => {
-                        return Err(e).context("Failed to read from local UDP service");
+                    // Drop the reader lock
+                    drop(m);
+
+                    // Grab the writer lock
+                    // This is the only thread that will try to grab the writer lock
+                    // So no need to worry about some other thread has already set up
+                    // the mapping between the gap of dropping the reader lock and
+                    // grabbing the writer lock
+                    let mut m = port_map.write().await;
+
+                    match udp_connect(&local_addr).await {
+                        Ok(s) => {
+                            let (inbound_tx, inbound_rx) = mpsc::channel(1024);
+                            m.insert(external_addr, inbound_tx);
+                            tokio::spawn(run_udp_forwarder(
+                                s,
+                                inbound_rx,
+                                sender.clone(),
+                                external_addr,
+                                channel_id,
+                                port_map.clone(),
+                            ));
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to create UDP forwarder for {}: {:#}",
+                                external_addr, e
+                            );
+                        }
                     }
                 }
-            },
 
-            // Receive data from server via control channel
-            data_result = data_rx.recv() => {
-                match data_result {
-                    Some(data) => {
-                        let external_addr = data.socket_addr.unwrap();
-
-                        // Track this as the last external address for simple echo responses
-                        last_external_addr = Some(external_addr);
-
-                        // Look up the local address for this external address
-                        let local_target = if let Some(local_data) = routing_table.get_local_data(&external_addr) {
-                            let local_data = *local_data;
-                            routing_table.update_activity(&external_addr, true);
-                            local_data
-                        } else {
-                            // New session from server - register it
-                            routing_table.register_session(external_addr, target_addr);
-                            target_addr
-                        };
-
-                        trace!("Received {} bytes from {} (routing to {}) for UDP channel {} (sessions: {})",
-                               data.data.len(), external_addr, local_target, channel_id, routing_table.session_count());
-
-                        // Forward to appropriate local address
-                        if let Err(e) = local_socket.send_to(&data.data, local_target).await {
-                            error!("Failed to send data to local UDP service at {}: {:#}", local_target, e);
-                            // Don't break the loop for individual send failures
-                        }
-                    },
-                    None => {
-                        debug!("EOF received from server for UDP channel {}", channel_id);
-                        return Ok(false)
-                    }
+                // Now there should be a udp forwarder that can receive the packet
+                let m = port_map.read().await;
+                if let Some(tx) = m.get(&external_addr) {
+                    let _ = tx.send(data.data).await;
                 }
             }
-
-            // Periodic cleanup of expired sessions
-            _ = cleanup_interval.tick() => {
-                let cleaned = routing_table.cleanup_expired_sessions();
-                if cleaned > 0 {
-                    debug!("UDP client channel {}: cleaned {} expired sessions, {} active sessions remain",
-                           channel_id, cleaned, routing_table.session_count());
-                }
+            None => {
+                debug!("EOF received from server for UDP channel {}", channel_id);
+                return Ok(false);
             }
         }
     }
+}
+
+// Run a UdpSocket for the visitor `from`
+async fn run_udp_forwarder(
+    s: UdpSocket,
+    mut inbound_rx: mpsc::Receiver<Bytes>,
+    sender: mpsc::Sender<Message>,
+    from: SocketAddr,
+    channel_id: u32,
+    port_map: UdpPortMap,
+) -> Result<()> {
+    debug!(
+        "UDP forwarder created for {} on channel {}",
+        from, channel_id
+    );
+    let mut buf = vec![0u8; UDP_BUFFER_SIZE];
+
+    loop {
+        tokio::select! {
+            // Receive from the server
+            data = inbound_rx.recv() => {
+                if let Some(data) = data {
+                    s.send(&data).await.with_context(|| "Failed to send UDP traffic to the service")?;
+                } else {
+                    break;
+                }
+            },
+
+            // Receive from the service
+            val = s.recv(&mut buf) => {
+                let len = match val {
+                    Ok(v) => v,
+                    Err(_) => break
+                };
+
+                sender.send(Message::DataChannelDataUdp(
+                    DataChannelDataUdp {
+                    channel_id,
+                    data: buf[..len].to_vec(),
+                    socket_addr: Some(socket_addr_to_proto(&from)),
+                })).await.with_context(|| "Failed to send UDP traffic to the server")?;
+            },
+
+            // No traffic for the duration of UDP_TIMEOUT, clean up the state
+            _ = time::sleep(Duration::from_secs(UDP_TIMEOUT)) => {
+                break;
+            }
+        }
+    }
+
+    let mut port_map = port_map.write().await;
+    port_map.remove(&from);
+
+    debug!(
+        "UDP forwarder dropped for {} on channel {}",
+        from, channel_id
+    );
+    Ok(())
 }
 
 // The entrypoint of running a client
@@ -738,7 +774,7 @@ async fn handle_endpoint_ack(
     config: &Arc<RwLock<ClientConfig>>,
     command_rx: &mut mpsc::Receiver<Message>,
     result_tx: &mpsc::Sender<Message>,
-    servers: &mut HashMap<String, SubProcess>,
+    servers: Arc<RwLock<HashMap<String, SubProcess>>>,
 ) -> Result<()> {
     let protocol: Protocol = endpoint
         .client
@@ -782,7 +818,7 @@ async fn handle_endpoint_ack(
     match res {
         Some(Ok(p)) => {
             let port = p.port;
-            servers.insert(endpoint.guid.clone(), p);
+            servers.write().insert(endpoint.guid.clone(), p);
 
             let now = Instant::now();
             while is_tcp_port_available("0.0.0.0", port)

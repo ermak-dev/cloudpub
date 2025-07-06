@@ -75,6 +75,7 @@ message ServerEndpoint {
   int64 id = 7;
   string bind_addr = 8;
   string error = 9;
+  optional string default_status = 10;
 }
 
 message CreateDataChannelWithId {
