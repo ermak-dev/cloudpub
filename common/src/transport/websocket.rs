@@ -22,12 +22,12 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::fd::RawFd;
 use std::sync::Arc;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
 use tokio_tungstenite::{accept_hdr_async_with_config, client_async_with_config, WebSocketStream};
 use tokio_util::io::StreamReader;
 use tracing::{debug, error, trace};
-use url::Url;
 
 use futures_util::sink::{Sink, SinkExt};
 use futures_util::stream::StreamExt;
@@ -180,7 +180,7 @@ impl AsyncStream for StreamWrapper {
             }
             Poll::Ready(Some(Ok(res))) => {
                 if let Message::Binary(b) = res {
-                    Poll::Ready(Some(Ok(b.into())))
+                    Poll::Ready(Some(Ok(b)))
                 } else {
                     Poll::Ready(Some(Err(Error::new(
                         ErrorKind::InvalidData,
@@ -290,10 +290,7 @@ impl Transport for WebsocketTransport {
             .as_ref()
             .ok_or_else(|| anyhow!("Missing websocket config"))?;
 
-        let conf = WebSocketConfig {
-            write_buffer_size: 0,
-            ..Default::default()
-        };
+        let conf = WebSocketConfig::default().write_buffer_size(0);
 
         let sub = match wsconfig.tls {
             #[cfg(feature = "rustls")]
@@ -364,13 +361,6 @@ impl Transport for WebsocketTransport {
 
     async fn connect(&self, addr: &AddrMaybeCached) -> anyhow::Result<Self::Stream> {
         let u = format!("wss://{}/endpoint/v3", &addr.addr.as_str());
-        let url = match Url::parse(&u) {
-            Ok(parsed_url) => parsed_url,
-            Err(e) => {
-                error!("Failed to parse URL: {:?}", e);
-                return Err(e.into());
-            }
-        };
         let tstream = match &self.sub {
             SubTransport::Insecure(t) => {
                 TransportStream::Insecure(t.connect(addr).await?.into_stream())
@@ -378,10 +368,16 @@ impl Transport for WebsocketTransport {
             #[cfg(feature = "rustls")]
             SubTransport::Secure(t) => TransportStream::Secure(t.connect(addr).await?),
         };
-        debug!("Connecting to {}", &url);
-        let (wsstream, _) = client_async_with_config(url, tstream, Some(self.conf))
-            .await
-            .with_context(|| format!("Failed to connect to {}", u))?;
+        debug!("Connecting to {}", u);
+        let (wsstream, _) = client_async_with_config(
+            u.clone()
+                .into_client_request()
+                .context("Failed to create client request")?,
+            tstream,
+            Some(self.conf),
+        )
+        .await
+        .with_context(|| format!("Failed to connect to {}", u))?;
 
         debug!("Connected");
 

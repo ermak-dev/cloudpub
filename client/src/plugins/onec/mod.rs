@@ -1,4 +1,4 @@
-use crate::config::{ClientConfig, EnvConfig, ENV_CONFIG};
+use crate::config::{ClientConfig, ClientOpts, EnvConfig, ENV_CONFIG};
 use crate::plugins::httpd::{setup_httpd, start_httpd};
 use crate::plugins::Plugin;
 use crate::shell::{find, get_cache_dir, SubProcess};
@@ -71,6 +71,7 @@ impl Plugin for OneCPlugin {
     async fn setup(
         &self,
         config: &Arc<RwLock<ClientConfig>>,
+        _opts: &ClientOpts,
         command_rx: &mut mpsc::Receiver<Message>,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
@@ -82,6 +83,7 @@ impl Plugin for OneCPlugin {
         &self,
         endpoint: &ServerEndpoint,
         config: &Arc<RwLock<ClientConfig>>,
+        _opts: &ClientOpts,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess> {
         let env = check_enviroment(config.clone())?;

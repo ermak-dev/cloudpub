@@ -104,8 +104,8 @@ impl ProtobufStream for TcpStream {
 
 #[derive(Debug)]
 pub struct TcpTransport {
-    socket_opts: SocketOpts,
-    cfg: TcpConfig,
+    pub socket_opts: SocketOpts,
+    pub cfg: TcpConfig,
 }
 
 #[async_trait]
@@ -116,7 +116,7 @@ impl Transport for TcpTransport {
 
     fn new(config: &TransportConfig) -> Result<Self> {
         Ok(TcpTransport {
-            socket_opts: SocketOpts::from_cfg(&config.tcp),
+            socket_opts: SocketOpts::for_control_channel(),
             cfg: config.tcp.clone(),
         })
     }
@@ -132,35 +132,17 @@ impl Transport for TcpTransport {
     }
 
     fn hint(conn: &Self::Stream, opt: SocketOpts) {
-        // Apply socket options to the underlying raw TCP stream
-        // We can't clone TcpStream, so we need to apply options differently
-        if let Some(v) = opt.keepalive {
-            let keepalive_duration = std::time::Duration::from_secs(v.keepalive_secs);
-            let keepalive_interval = std::time::Duration::from_secs(v.keepalive_interval);
-
-            if let Err(e) =
-                try_set_tcp_keepalive(conn.get_ref(), keepalive_duration, keepalive_interval)
-            {
-                tracing::error!("Failed to set keepalive: {:#}", e);
-            }
-        }
-
-        if let Some(nodelay) = opt.nodelay {
-            match conn.get_ref() {
-                Stream::Tcp(tcp_stream) => {
-                    if let Err(e) = tcp_stream.set_nodelay(nodelay) {
-                        tracing::error!("Failed to set nodelay: {:#}", e);
-                    }
-                }
-                #[cfg(unix)]
-                Stream::Unix(_) => {
-                    // Unix sockets don't support nodelay
-                }
-            }
-        }
+        opt.apply(conn.get_ref());
     }
 
     async fn bind(&self, addr: NamedSocketAddr) -> Result<Self::Acceptor> {
+        #[cfg(unix)]
+        if let NamedSocketAddr::Unix(path) = &addr {
+            // Ensure the socket file is removed if it exists
+            if path.exists() {
+                tokio::fs::remove_file(path).await?;
+            }
+        }
         Ok(Listener::bind(&addr).await?)
     }
 

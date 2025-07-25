@@ -194,6 +194,14 @@ pub fn proto_to_socket_addr(proto_addr: &crate::protocol::v2::SocketAddr) -> Res
 
 pub fn trace_message(label: &str, msg: &ProtocolMessage) {
     match msg {
+        ProtocolMessage::CreateDataChannelWithId(data) => {
+            trace!(
+                "{}: CreateDataChannelWithId {{ channel_id: {}, {:?} }}",
+                label,
+                data.channel_id,
+                data.endpoint
+            );
+        }
         ProtocolMessage::DataChannelData(data) => {
             //let data_str = String::from_utf8_lossy(&data.data);
             trace!(
@@ -210,6 +218,22 @@ pub fn trace_message(label: &str, msg: &ProtocolMessage) {
                 data.channel_id,
                 data.data.len(),
                 data.socket_addr
+            );
+        }
+        ProtocolMessage::DataChannelAck(data) => {
+            trace!(
+                "{}: DataChannelAck {{ channel_id: {}, consumed: {} bytes }}",
+                label,
+                data.channel_id,
+                data.consumed
+            );
+        }
+        ProtocolMessage::DataChannelEof(data) => {
+            trace!(
+                "{}: DataChannelEof {{ channel_id: {}, error: {} }}",
+                label,
+                data.channel_id,
+                data.error
             );
         }
         ProtocolMessage::HeartBeat(_) => {

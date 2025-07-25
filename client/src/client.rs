@@ -1,9 +1,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use backoff::backoff::Backoff;
+use common::data::DataChannel;
+use common::fair_channel::{fair_channel, FairSender};
 use common::protocol::message::Message;
 use common::protocol::{
-    AgentInfo, ConnectState, Data, DataChannelData, DataChannelDataUdp, DataChannelEof,
-    EndpointRemove, EndpointStop, ErrorInfo, ErrorKind, HeartBeat, Protocol, ServerEndpoint,
+    AgentInfo, ConnectState, Data, DataChannelAck, DataChannelData, DataChannelDataUdp,
+    DataChannelEof, EndpointRemove, EndpointStop, ErrorInfo, ErrorKind, HeartBeat, Protocol,
+    ServerEndpoint,
 };
 use common::transport::{AddrMaybeCached, SocketOpts, Transport, WebsocketTransport};
 use common::utils::{
@@ -20,61 +23,49 @@ use tokio::sync::mpsc;
 use tokio::time::{self, Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
-use common::constants::{run_control_chan_backoff, DEFAULT_CLIENT_RETRY_INTERVAL_SECS};
+use common::constants::{
+    run_control_chan_backoff, CONTROL_CHANNEL_SIZE, DATA_BUFFER_SIZE, DATA_CHANNEL_SIZE,
+    DEFAULT_CLIENT_RETRY_INTERVAL_SECS, UDP_BUFFER_SIZE, UDP_TIMEOUT,
+};
 use futures::future::FutureExt;
 
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ClientOpts};
 use crate::shell::SubProcess;
 use crate::upgrade::handle_upgrade_available;
 use bytes::Bytes;
 use common::transport::ProtobufStream;
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
-use std::fmt::{self, Debug, Formatter};
 
 #[cfg(feature = "plugins")]
 use crate::plugins::registry::PluginRegistry;
-
-struct DataChannel {
-    data_tx: mpsc::Sender<Data>,
-}
-
-impl DataChannel {
-    fn new_client(data_tx: mpsc::Sender<Data>) -> Self {
-        Self { data_tx }
-    }
-}
 
 type Service = Arc<DataChannel>;
 
 type Services = Arc<RwLock<HashMap<String, Service>>>;
 
-impl Debug for DataChannel {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("DataChannel")
-    }
-}
-
 // Holds the state of a client
 struct Client<T: Transport> {
     config: Arc<RwLock<ClientConfig>>,
+    opts: ClientOpts,
     services: Services,
     transport: Arc<T>,
     servers: Arc<RwLock<HashMap<String, SubProcess>>>,
     connected: bool,
-    data_channels: Arc<RwLock<HashMap<u32, DataChannel>>>,
+    data_channels: Arc<RwLock<HashMap<u32, Arc<DataChannel>>>>,
     // Used to break long running setup
     break_command_tx: Option<mpsc::Sender<Message>>,
 }
 
 impl<T: 'static + Transport> Client<T> {
     // Create a Client from `[client]` config block
-    async fn from(config: Arc<RwLock<ClientConfig>>) -> Result<Client<T>> {
+    async fn from(config: Arc<RwLock<ClientConfig>>, opts: ClientOpts) -> Result<Client<T>> {
         let transport = Arc::new(
             T::new(&config.clone().read().transport)
                 .with_context(|| "Failed to create the transport")?,
         );
         Ok(Client {
             config,
+            opts,
             services: Default::default(),
             servers: Arc::new(RwLock::new(Default::default())),
             transport,
@@ -92,7 +83,6 @@ impl<T: 'static + Transport> Client<T> {
     ) -> Result<()> {
         let transport = self.transport.clone();
 
-        let config = self.config.clone();
         let services = self.services.clone();
 
         let mut retry_backoff = run_control_chan_backoff(DEFAULT_CLIENT_RETRY_INTERVAL_SECS);
@@ -103,12 +93,7 @@ impl<T: 'static + Transport> Client<T> {
             .await
             .context("Can't send Connecting event")?;
         while let Err(err) = self
-            .run_control_channel(
-                config.clone(),
-                transport.clone(),
-                &mut command_rx,
-                &result_tx,
-            )
+            .run_control_channel(transport.clone(), &mut command_rx, &result_tx)
             .boxed()
             .await
         {
@@ -160,12 +145,11 @@ impl<T: 'static + Transport> Client<T> {
 
     async fn run_control_channel(
         &mut self,
-        config: Arc<RwLock<ClientConfig>>,
         transport: Arc<T>,
         command_rx: &mut mpsc::Receiver<Message>,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
-        let url = config.read().server.clone();
+        let url = self.config.read().server.clone();
         let port = url.port().unwrap_or(443);
         let host = url.host_str().context("Failed to get host")?;
         let mut host_and_port = format!("{}:{}", host, port);
@@ -195,32 +179,41 @@ impl<T: 'static + Transport> Client<T> {
                 .build("cloudpub")
                 .unwrap_or_default();
 
-            let hwid = config
+            let hwid = self
+                .config
                 .read()
                 .hwid
                 .as_ref()
                 .map(|s| s.to_string())
                 .unwrap_or(hwid);
 
-            let (email, password) = if let Some(ref cred) = config.read().credentials {
+            let (email, password) = if let Some(ref cred) = self.opts.credentials {
                 (cred.0.clone(), cred.1.clone())
             } else {
                 (String::new(), String::new())
             };
 
-            let token = config.read().token.clone().unwrap_or_default().to_string();
+            let token = self
+                .config
+                .read()
+                .token
+                .clone()
+                .unwrap_or_default()
+                .to_string();
 
             let agent_info = AgentInfo {
-                agent_id: config.read().agent_id.clone(),
+                agent_id: self.config.read().agent_id.clone(),
                 token,
                 email,
                 password,
                 hostname: hostname::get()?.into_string().unwrap(),
                 version: VERSION.to_string(),
-                gui: config.read().gui,
+                gui: self.opts.gui,
                 platform: get_platform(),
                 hwid,
                 server_host_and_port: host_and_port.clone(),
+                transient: self.opts.transient,
+                secondary: self.opts.secondary,
             };
 
             debug!("Sending hello: {:?}", agent_info);
@@ -240,7 +233,7 @@ impl<T: 'static + Transport> Client<T> {
                 Some(msg) => match msg {
                     Message::AgentAck(args) => {
                         if !args.token.is_empty() {
-                            let mut c = config.write();
+                            let mut c = self.config.write();
                             c.token = Some(args.token.as_str().into());
                             c.save().context("Write config")?;
                         }
@@ -271,16 +264,17 @@ impl<T: 'static + Transport> Client<T> {
             .await
             .context("Can't send Connected event")?;
 
-        let (command_tx2, mut command_rx2) = mpsc::channel::<Message>(1024);
+        let (command_tx2, mut command_rx2) = fair_channel::<Message>(CONTROL_CHANNEL_SIZE);
         // Used to break long running setup
 
-        let heartbeat_timeout = config.read().heartbeat_timeout;
+        let heartbeat_timeout = self.config.read().heartbeat_timeout;
 
         loop {
             let command_tx2 = command_tx2.clone();
             tokio::select! {
                 cmd = command_rx2.recv() => {
                     if let Some(cmd) = cmd {
+                        //common::utils::trace_message("Send to server", &cmd);
                         conn.send_message(&cmd).await.context("Failed to send command")?;
                     }
                 },
@@ -330,10 +324,11 @@ impl<T: 'static + Transport> Client<T> {
                                 conn.send_message(&msg).await.context("Failed to send message")?;
                             }
                             Message::PerformUpgrade(info) => {
-                                let config_clone = config.clone();
+                                let config_clone = self.config.clone();
                                 if let Err(e) = handle_upgrade_available(
                                     &info.version,
                                     config_clone,
+                                    self.opts.gui,
                                     command_rx,
                                     result_tx,
                                 )
@@ -380,12 +375,20 @@ impl<T: 'static + Transport> Client<T> {
                                     let result_tx = result_tx.clone();
                                     let command_tx2 = command_tx2.clone();
                                     let servers = self.servers.clone();
-                                    let config = config.clone();
+                                    let config = self.config.clone();
                                     let (break_command_tx, mut break_command_rx) = mpsc::channel::<Message>(1);
+                                    let opts = self.opts.clone();
                                     self.break_command_tx = Some(break_command_tx);
                                     tokio::spawn(async move {
                                         if !servers.read().contains_key(&endpoint.guid) {
-                                            if let Err(err) = handle_endpoint_ack(&endpoint, &config, &mut break_command_rx, &result_tx, servers.clone()).await {
+                                            if let Err(err) = handle_endpoint_ack(
+                                                &endpoint,
+                                                &config,
+                                                &opts,
+                                                &mut break_command_rx,
+                                                &result_tx,
+                                                servers.clone()
+                                            ).await {
                                                 error!("Error handling endpoint ack: {:?}", err);
                                                 servers.write().remove(&endpoint.guid);
                                                 command_tx2.send(Message::EndpointStop(EndpointStop {guid: endpoint.guid.clone()})).await.ok();
@@ -404,12 +407,13 @@ impl<T: 'static + Transport> Client<T> {
                                     debug!("Creating data channel {} for endpoint {:?}", channel_id, endpoint.guid);
 
                                     // Create channels for data flow
-                                    let (data_tx, data_rx) = mpsc::channel::<Data>(1024);
+                                    let (data_tx, data_rx) = mpsc::channel::<Data>(DATA_CHANNEL_SIZE);
 
                                     // Register the data channel
+                                    let data_channel = Arc::new(DataChannel::new_client(channel_id, data_tx.clone()));
                                     {
                                         let mut channels = self.data_channels.write();
-                                        channels.insert(channel_id, DataChannel::new_client(data_tx));
+                                        channels.insert(channel_id, data_channel.clone());
                                     }
 
                                     // Check if endpoint handled by plugin server
@@ -425,35 +429,32 @@ impl<T: 'static + Transport> Client<T> {
                                     let protocol: Protocol = client.local_proto.try_into().unwrap();
 
                                     tokio::spawn(async move {
-                                        let res = if protocol == Protocol::Udp {
+                                        if let Err(err) = if protocol == Protocol::Udp {
                                             handle_udp_data_channel(
-                                                channel_id,
+                                                data_channel,
                                                 local_addr,
                                                 command_tx2.clone(),
                                                 data_rx
                                             ).await
                                         } else {
                                             handle_tcp_data_channel(
-                                                channel_id,
+                                                data_channel,
                                                 local_addr,
                                                 command_tx2.clone(),
                                                 data_rx
                                             ).await
-                                        };
-                                        match res {
-                                            Ok(true) => {
-                                                debug!("Data channel {} closed by client", channel_id);
-                                                command_tx2.send(Message::DataChannelEof(DataChannelEof { channel_id, error: String::new() })).await.ok();
-                                            }
-                                            Ok(false) => {
-                                                error!("Data channel {} closed by server", channel_id);
-                                            }
-                                            Err(err) => {
-                                                error!("Error handling data channel {}: {:?}", channel_id, err);
-                                                command_tx2.send(Message::DataChannelEof(DataChannelEof { channel_id, error: err.to_string()})).await.ok();
-                                            }
-                                        };
-                                        data_channels.write().remove(&channel_id);
+                                        } {
+                                            error!("DataChannel {{ channel_id: {} }}: {:?}", channel_id, err);
+                                            command_tx2
+                                                .send(Message::DataChannelEof(
+                                                        DataChannelEof {
+                                                            channel_id,
+                                                            error: err.to_string()
+                                                    })
+                                                ).await.ok();
+                                        }
+                                        if let Some(dc) = data_channels.write()
+                                            .remove(&channel_id) { dc.close() }
                                     });
                                 },
 
@@ -505,7 +506,7 @@ impl<T: 'static + Transport> Client<T> {
 
                                 Message::DataChannelEof(eof) => {
                                     // Signal EOF by dropping the data channel
-                                    self.data_channels.write().remove(&eof.channel_id);
+                                    if let Some(dc) = self.data_channels.write().remove(&eof.channel_id) { dc.close() }
                                     if eof.error.is_empty() {
                                         // Normal EOF without error
                                         debug!("Data channel {} closed by server", eof.channel_id);
@@ -514,6 +515,12 @@ impl<T: 'static + Transport> Client<T> {
                                         error!("Data channel {} closed by server with error: {}", eof.channel_id, eof.error);
                                     }
                                 },
+
+                                Message::DataChannelAck(DataChannelAck { channel_id, consumed }) => {
+                                    if let Some(ch) = self.data_channels.read().get(&channel_id) {
+                                        ch.add_capacity(consumed);
+                                    }
+                                }
 
                                 Message::HeartBeat(_) => {
                                     conn.send_message(&Message::HeartBeat(HeartBeat{})).await.context("Failed to send heartbeat")?;
@@ -547,15 +554,12 @@ impl<T: 'static + Transport> Client<T> {
 // This function is no longer needed as we handle data channels differently
 
 async fn handle_tcp_data_channel(
-    channel_id: u32,
+    data_channel: Arc<DataChannel>,
     local_addr: String,
-    sender: mpsc::Sender<Message>,
+    sender: FairSender<Message>,
     mut data_rx: mpsc::Receiver<Data>,
-) -> Result<bool> {
-    debug!(
-        "Handling client data channel {} to {}",
-        channel_id, local_addr
-    );
+) -> Result<()> {
+    debug!("Handling client {:?} to {}", data_channel, local_addr);
 
     // Connect to local service immediately
     let mut local_stream = TcpStream::connect(&local_addr)
@@ -567,25 +571,38 @@ async fn handle_tcp_data_channel(
         .set_nodelay(true)
         .context("Failed to set TCP_NODELAY")?;
 
-    let mut buf = [0u8; 16384]; // Smaller buffer for low latency
+    let mut buf = [0u8; DATA_BUFFER_SIZE]; // Smaller buffer for low latency
 
     loop {
         tokio::select! {
+            biased;
             res = local_stream.read(&mut buf) => {
                 match res {
                     Ok(0) => {
-                        return Ok(true)
+                        debug!("EOF received from local service for {:?}", data_channel);
+                        sender.send(Message::DataChannelEof(DataChannelEof {
+                            channel_id: data_channel.id,
+                            error: String::new()
+                        }))
+                        .await
+                        .context("Failed to send data to server")?;
+                        break;
                     },
                     Ok(n) => {
+                        //debug!("Read {} bytes from local service for {:?}", n, data_channel);
+                        if data_channel.wait_for_capacity(n as u32).await.is_err() {
+                            debug!("Data channel {} closed when waiting for capacity", data_channel.id);
+                            break;
+                        }
                         sender.send(Message::DataChannelData(DataChannelData {
-                            channel_id,
+                            channel_id: data_channel.id,
                             data: buf[0..n].to_vec()
                         }))
                         .await
                         .context("Failed to send data to server")?;
                     },
                     Err(e) => {
-                        return Err(e).context("Local service read error");
+                        return Err(e).context("Failed to read from local service");
                     }
                 }
             }
@@ -594,39 +611,43 @@ async fn handle_tcp_data_channel(
             data_result = data_rx.recv() => {
                 match data_result {
                     Some(data) => {
-                        trace!("Received {} bytes from server for channel {}", data.data.len(), channel_id);
+                        trace!("Received {} bytes from server for {:?}", data.data.len(), data_channel);
                         local_stream.write_all(&data.data).await.context("Failed to write data to local service")?;
+                        sender.send(Message::DataChannelAck(
+                            DataChannelAck {
+                                channel_id: data_channel.id,
+                                consumed: data.data.len() as u32
+                            }
+                        )).await.with_context(|| "Failed to send UDP traffic ack to the server")?;
                     },
                     None => {
-                        debug!("EOF received from server for channel {}", channel_id);
-                        return Ok(false)
+                        debug!("EOF received from server for {:?}", data_channel);
                     }
                 }
             }
         }
     }
+    Ok(())
 }
 
 // UDP port map for managing forwarders per remote address
 type UdpPortMap = Arc<tokio::sync::RwLock<HashMap<SocketAddr, mpsc::Sender<Bytes>>>>;
 
-const UDP_TIMEOUT: u64 = 300; // 5 minutes timeout for UDP forwarders
-const UDP_BUFFER_SIZE: usize = 65536;
-
 async fn handle_udp_data_channel(
-    channel_id: u32,
+    data_channel: Arc<DataChannel>,
     local_addr: String,
-    sender: mpsc::Sender<Message>,
+    sender: FairSender<Message>,
     mut data_rx: mpsc::Receiver<Data>,
-) -> Result<bool> {
+) -> Result<()> {
     debug!(
-        "Handling client UDP channel {} to {}",
-        channel_id, local_addr
+        "Handling client UDP channel {:?} to {}",
+        data_channel, local_addr
     );
 
     let port_map: UdpPortMap = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
     loop {
+        let data_channel = data_channel.clone();
         // Receive data from server via control channel
         match data_rx.recv().await {
             Some(data) => {
@@ -650,14 +671,14 @@ async fn handle_udp_data_channel(
 
                     match udp_connect(&local_addr).await {
                         Ok(s) => {
-                            let (inbound_tx, inbound_rx) = mpsc::channel(1024);
+                            let (inbound_tx, inbound_rx) = mpsc::channel(DATA_CHANNEL_SIZE);
                             m.insert(external_addr, inbound_tx);
                             tokio::spawn(run_udp_forwarder(
                                 s,
                                 inbound_rx,
                                 sender.clone(),
                                 external_addr,
-                                channel_id,
+                                data_channel,
                                 port_map.clone(),
                             ));
                         }
@@ -677,26 +698,24 @@ async fn handle_udp_data_channel(
                 }
             }
             None => {
-                debug!("EOF received from server for UDP channel {}", channel_id);
-                return Ok(false);
+                debug!("EOF received from server for UDP {:?}", data_channel);
+                break;
             }
         }
     }
+    Ok(())
 }
 
 // Run a UdpSocket for the visitor `from`
 async fn run_udp_forwarder(
     s: UdpSocket,
     mut inbound_rx: mpsc::Receiver<Bytes>,
-    sender: mpsc::Sender<Message>,
+    sender: FairSender<Message>,
     from: SocketAddr,
-    channel_id: u32,
+    data_channel: Arc<DataChannel>,
     port_map: UdpPortMap,
 ) -> Result<()> {
-    debug!(
-        "UDP forwarder created for {} on channel {}",
-        from, channel_id
-    );
+    debug!("UDP forwarder created for {} on {:?}", from, data_channel);
     let mut buf = vec![0u8; UDP_BUFFER_SIZE];
 
     loop {
@@ -705,6 +724,12 @@ async fn run_udp_forwarder(
             data = inbound_rx.recv() => {
                 if let Some(data) = data {
                     s.send(&data).await.with_context(|| "Failed to send UDP traffic to the service")?;
+                    sender.send(Message::DataChannelAck(
+                        DataChannelAck {
+                            channel_id: data_channel.id,
+                            consumed: data.len() as u32
+                        }
+                    )).await.with_context(|| "Failed to send UDP traffic ack to the server")?;
                 } else {
                     break;
                 }
@@ -717,9 +742,13 @@ async fn run_udp_forwarder(
                     Err(_) => break
                 };
 
+                if data_channel.wait_for_capacity(len as u32).await.is_err() {
+                    break;
+                }
+
                 sender.send(Message::DataChannelDataUdp(
                     DataChannelDataUdp {
-                    channel_id,
+                    channel_id: data_channel.id,
                     data: buf[..len].to_vec(),
                     socket_addr: Some(socket_addr_to_proto(&from)),
                 })).await.with_context(|| "Failed to send UDP traffic to the server")?;
@@ -735,17 +764,16 @@ async fn run_udp_forwarder(
     let mut port_map = port_map.write().await;
     port_map.remove(&from);
 
-    debug!(
-        "UDP forwarder dropped for {} on channel {}",
-        from, channel_id
-    );
+    debug!("UDP forwarder dropped for {} on {:?}", from, data_channel);
     Ok(())
 }
 
 // The entrypoint of running a client
+#[cfg_attr(not(feature = "plugins"), allow(unused_variables))]
 async fn setup_plugin(
     protocol: Protocol,
     config: &Arc<RwLock<ClientConfig>>,
+    opts: &ClientOpts,
     command_rx: &mut mpsc::Receiver<Message>,
     result_tx: &mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
@@ -753,7 +781,7 @@ async fn setup_plugin(
         #[cfg(feature = "plugins")]
         Protocol::Webdav | Protocol::OneC | Protocol::Minecraft => {
             if let Some(plugin) = PluginRegistry::new().get(protocol) {
-                plugin.setup(config, command_rx, result_tx).await
+                plugin.setup(config, opts, command_rx, result_tx).await
             } else {
                 Err(anyhow!(
                     "Unsupported protocol: no plugin found for {:?}",
@@ -772,6 +800,7 @@ async fn setup_plugin(
 async fn handle_endpoint_ack(
     endpoint: &ServerEndpoint,
     config: &Arc<RwLock<ClientConfig>>,
+    opts: &ClientOpts,
     command_rx: &mut mpsc::Receiver<Message>,
     result_tx: &mpsc::Sender<Message>,
     servers: Arc<RwLock<HashMap<String, SubProcess>>>,
@@ -790,7 +819,7 @@ async fn handle_endpoint_ack(
         return Ok(());
     }
 
-    let err = setup_plugin(protocol, config, command_rx, result_tx).await;
+    let err = setup_plugin(protocol, config, opts, command_rx, result_tx).await;
 
     if let Err(err) = err {
         error!("{:?}", err);
@@ -808,7 +837,7 @@ async fn handle_endpoint_ack(
         #[cfg(feature = "plugins")]
         Protocol::OneC | Protocol::Minecraft | Protocol::Webdav => {
             if let Some(plugin) = PluginRegistry::new().get(protocol) {
-                Some(plugin.publish(endpoint, config, result_tx).await)
+                Some(plugin.publish(endpoint, config, opts, result_tx).await)
             } else {
                 None
             }
@@ -860,10 +889,11 @@ async fn handle_endpoint_ack(
 
 pub async fn run_client(
     config: Arc<RwLock<ClientConfig>>,
+    opts: ClientOpts,
     command_rx: mpsc::Receiver<Message>,
     result_tx: mpsc::Sender<Message>,
 ) -> Result<()> {
-    let mut client = Client::<WebsocketTransport>::from(config)
+    let mut client = Client::<WebsocketTransport>::from(config, opts)
         .await
         .context("Failed to create Websocket client")?;
     client.run(command_rx, result_tx).await

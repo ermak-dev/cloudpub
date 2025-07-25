@@ -10,6 +10,60 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
+use nix::sys::signal::{self, Signal};
+#[cfg(unix)]
+use nix::unistd::Pid;
+
+#[cfg(unix)]
+fn kill_by_pid_file(pid_file: &std::path::Path) {
+    use std::fs;
+    if !pid_file.exists() {
+        return;
+    }
+
+    let pid_str = match fs::read_to_string(pid_file) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::warn!("Failed to read PID file {}: {}", pid_file.display(), e);
+            return;
+        }
+    };
+
+    let pid_num: i32 = match pid_str.trim().parse() {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to parse PID from file {}: {}",
+                pid_file.display(),
+                e
+            );
+            return;
+        }
+    };
+
+    let pid = Pid::from_raw(pid_num);
+
+    // Try to kill the process using nix crate
+    match signal::kill(pid, Signal::SIGTERM) {
+        Ok(()) => {
+            tracing::info!("Successfully sent SIGTERM to process {}", pid_num);
+        }
+        Err(nix::errno::Errno::ESRCH) => {
+            // Process doesn't exist, that's fine
+            tracing::debug!("Process {} not found (already dead)", pid_num);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to kill process {}: {}", pid_num, e);
+        }
+    }
+
+    // Remove the PID file
+    if let Err(e) = fs::remove_file(pid_file) {
+        tracing::warn!("Failed to remove PID file {}: {}", pid_file.display(), e);
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub const HTTPD_EXE: &str = "httpd.exe";
 #[cfg(unix)]
@@ -125,6 +179,10 @@ pub async fn start_httpd(
     let mut lock_file = configs_dir.clone();
     lock_file.push(format!("{}.lock", endpoint.guid));
 
+    // Kill any existing httpd process before starting a new one
+    #[cfg(unix)]
+    kill_by_pid_file(&pid_file);
+
     let port = find_free_tcp_port()
         .await
         .context(t!("error-finding-free-port"))?;
@@ -163,7 +221,12 @@ pub async fn start_httpd(
 
     let server = SubProcess::new(
         httpd_exe,
-        vec!["-X".to_string(), "-f".to_string(), httpd_cfg],
+        vec![
+            #[cfg(not(target_os = "windows"))]
+            "-X".to_string(),
+            "-f".to_string(),
+            httpd_cfg,
+        ],
         None,
         envs,
         result_tx,

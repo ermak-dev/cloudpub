@@ -1,4 +1,4 @@
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ClientOpts};
 use crate::plugins::Plugin;
 use crate::shell::{download, get_cache_dir, SubProcess};
 use anyhow::{bail, Context, Result};
@@ -30,9 +30,9 @@ const JDK_URL: &str =
 #[cfg(target_os = "macos")]
 const JDK_URL: &str = "https://download.java.net/java/GA/jdk23/3c5b90190c68498b986a97f276efd28a/37/GPL/openjdk-23_macos-x64_bin.tar.gz";
 
-// Minecraft server 1.21.6
+// Minecraft server 1.21.8
 const MINECRAFT_SERVER_URL: &str =
-    "https://piston-data.mojang.com/v1/objects/6e64dcabba3c01a7271b4fa6bd898483b794c59b/server.jar";
+    "https://piston-data.mojang.com/v1/objects/6bce4ef400e4efaa63a13d5e6f6b500be969ef81/server.jar";
 
 const MINECRAFT_SERVER_CFG: &str = include_str!("server.properties");
 
@@ -63,6 +63,7 @@ impl Plugin for MinecraftPlugin {
     async fn setup(
         &self,
         config: &Arc<RwLock<ClientConfig>>,
+        _opts: &ClientOpts,
         command_rx: &mut mpsc::Receiver<Message>,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
@@ -163,6 +164,7 @@ impl Plugin for MinecraftPlugin {
         &self,
         endpoint: &ServerEndpoint,
         config: &Arc<RwLock<ClientConfig>>,
+        opts: &ClientOpts,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess> {
         let minecraft_dir: PathBuf = endpoint.client.as_ref().unwrap().local_addr.clone().into();
@@ -217,7 +219,7 @@ impl Plugin for MinecraftPlugin {
         // Add the jar file argument
         args.push("-jar".to_string());
         args.push(minecraft_file.to_str().unwrap().to_string());
-        if !config.read().gui {
+        if !opts.gui {
             args.push("nogui".to_string());
         }
 

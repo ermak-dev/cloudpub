@@ -35,6 +35,13 @@ enum ErrorKind {
   EXECUTE_FAILED = 5;
 }
 
+enum FilterAction {
+  FILTER_ALLOW = 0;
+  FILTER_DENY = 1;
+  FILTER_REDIRECT = 2;
+  FILTER_LOG = 3;
+}
+
 enum ConnectState {
   CONNECTING = 0;
   CONNECTED = 1;
@@ -63,6 +70,7 @@ message ClientEndpoint {
   string username = 9;
   string password = 10;
   repeated Header headers = 11;
+  repeated FilterRule filter_rules = 12;
 }
 
 message ServerEndpoint {
@@ -84,16 +92,32 @@ message CreateDataChannelWithId {
 }
 
 message AgentInfo {
+  // Unique identifier for the agent generated and stored in config
+  // Only used for docker containers, for other system hwid used
   string agent_id = 1;
+  // Authentication token for the agent
   string token = 2;
+  // Hostname of the machine where agent is running
   string hostname = 3;
+  // Version of the agent, used for compatibility checks
   string version = 4;
+  // Indicates that agent is running in GUI mode
   bool gui = 5;
+  // Operating system platform, e.g. "linux", "windows", "darwin"
   string platform = 6;
+  // Unique hardware ID of machine, used for agent identification
   string hwid = 7;
+  // Host and port of the server to connect to
   string server_host_and_port = 8;
+  // Email, used for `login` command
   string email = 9;
+  // Password, used for `login` command
   string password = 10;
+  // Flag that channel used for API commands, not for data/publications
+  bool   secondary = 11;
+  // Indicates that all created publications on this channel are transient
+  // and deleted after disconnection
+  bool   transient = 12;
 }
 
 message DataChannelInfo {
@@ -193,6 +217,10 @@ message EndpointStop {
     string guid = 1;
 }
 
+message EndpointStart {
+    string guid = 1;
+}
+
 message EndpointStopAck {
     string guid = 1;
 }
@@ -211,6 +239,22 @@ message EndpointStartAll {
 
 message PerformUpgrade {
     string version = 1;
+}
+
+message DataChannelAck {
+    uint32 channel_id = 1;
+    uint32 consumed = 2; // Number of bytes consumed
+}
+
+message FilterRule {
+    int32 order = 1;
+    optional string action_value = 2;
+    FilterAction action_type = 3;
+    string data = 4;
+}
+
+message EndpointStopAll {
+    bool set_offline = 1; // If true, set offline default status
 }
 
 // Message wrapper
@@ -246,5 +290,8 @@ message Message {
     DataChannelEof data_channel_eof = 28;
     CreateDataChannelWithId create_data_channel_with_id = 29;
     PerformUpgrade perform_upgrade = 30;
+    DataChannelAck data_channel_ack = 31;
+    EndpointStopAll endpoint_stop_all = 32;
+    EndpointStart endpoint_guid_start = 33;
   }
 }

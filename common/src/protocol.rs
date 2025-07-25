@@ -28,6 +28,7 @@ pub fn str_enum<E: TryFrom<i32> + ToString>(e: i32) -> String {
 }
 
 pub mod v2 {
+    use crate::fair_channel::FairGroup;
     pub use crate::protocol::str_enum;
 
     use super::{DefaultPort, Endpoint};
@@ -146,6 +147,20 @@ pub mod v2 {
         }
     }
 
+    impl FromStr for FilterAction {
+        type Err = anyhow::Error;
+
+        fn from_str(s: &str) -> Result<Self> {
+            match s {
+                "allow" => Ok(FilterAction::FilterAllow),
+                "deny" => Ok(FilterAction::FilterDeny),
+                "redirect" => Ok(FilterAction::FilterRedirect),
+                "log" => Ok(FilterAction::FilterLog),
+                _ => bail!("Invalid filter action: {}", s),
+            }
+        }
+    }
+
     impl PartialEq for ClientEndpoint {
         fn eq(&self, other: &Self) -> bool {
             self.local_proto == other.local_proto
@@ -234,6 +249,10 @@ pub mod v2 {
             get_version_number(&self.version) >= get_version_number("2.1.1")
         }
 
+        pub fn is_support_backpressure(&self) -> bool {
+            get_version_number(&self.version) >= get_version_number("2.2.0")
+        }
+
         pub fn get_unique_id(&self) -> String {
             if self.hwid.is_empty() {
                 self.agent_id.clone()
@@ -263,15 +282,7 @@ pub mod v2 {
         let proto_msg =
             Message::decode(buf.as_slice()).context("Failed to decode Protocol Buffers message")?;
 
-        let msg: Message = proto_msg;
-        /*
-        match msg.message.unwrap() {
-            Message:: DataChannelData {data}  => debug!("Received data: {} bytes", data.len()),
-            Message::DataChannelDataUdp {data} => debug!("Received UDP data: {} bytes", data.len()),
-            msg => debug!("Received proto message: {:?}", msg),
-        }
-        */
-        Ok(msg.message.unwrap())
+        Ok(proto_msg.message.unwrap())
     }
 
     pub async fn write_message<T: AsyncWrite + Unpin>(
@@ -296,6 +307,26 @@ pub mod v2 {
         conn.write_all(&buf).await?;
         conn.flush().await?;
         Ok(())
+    }
+
+    impl FairGroup for message::Message {
+        fn group_id(&self) -> Option<u32> {
+            match self {
+                message::Message::DataChannelData(lhs) => Some(lhs.channel_id),
+                message::Message::DataChannelDataUdp(lhs) => Some(lhs.channel_id),
+                message::Message::DataChannelEof(lhs) => Some(lhs.channel_id),
+                message::Message::DataChannelAck(lhs) => Some(lhs.channel_id),
+                _ => None,
+            }
+        }
+
+        fn get_size(&self) -> Option<usize> {
+            match self {
+                message::Message::DataChannelData(data) => Some(data.data.len()),
+                message::Message::DataChannelDataUdp(data) => Some(data.data.len()),
+                _ => None, // Control messages have no size
+            }
+        }
     }
 }
 
@@ -508,6 +539,7 @@ pub mod v1 {
                 username: ce.username,
                 password: ce.password.0,
                 headers: Vec::new(),
+                filter_rules: Vec::new(),
             }
         }
     }
@@ -650,6 +682,8 @@ pub mod v1 {
                 server_host_and_port: ai.server_host_and_port,
                 email: String::new(),
                 password: String::new(),
+                transient: false,
+                secondary: false,
             }
         }
     }
@@ -876,7 +910,7 @@ impl UdpTraffic {
             len: self.data.len() as UdpPacketLen,
         };
 
-        let v = bincode::serialize(&hdr).unwrap();
+        let v = bincode::serde::encode_to_vec(&hdr, bincode::config::legacy()).unwrap();
 
         trace!("Write {:?} of length {}", hdr, v.len());
         writer.write_u8(v.len() as u8).await?;
@@ -898,7 +932,7 @@ impl UdpTraffic {
             len: data.len() as UdpPacketLen,
         };
 
-        let v = bincode::serialize(&hdr).unwrap();
+        let v = bincode::serde::encode_to_vec(&hdr, bincode::config::legacy()).unwrap();
 
         trace!("Write {:?} of length {}", hdr, v.len());
         writer.write_u8(v.len() as u8).await?;
@@ -916,8 +950,9 @@ impl UdpTraffic {
             .await
             .with_context(|| "Failed to read udp header")?;
 
-        let hdr: UdpHeader =
-            bincode::deserialize(&buf).with_context(|| "Failed to deserialize UdpHeader")?;
+        let hdr: UdpHeader = bincode::serde::decode_from_slice(&buf, bincode::config::legacy())
+            .with_context(|| "Failed to deserialize UdpHeader")?
+            .0;
 
         trace!("hdr {:?}", hdr);
 

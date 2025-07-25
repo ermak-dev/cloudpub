@@ -1,4 +1,4 @@
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ClientOpts};
 use crate::shell::SubProcess;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -17,6 +17,7 @@ pub trait Plugin: Send + Sync {
     async fn setup(
         &self,
         config: &Arc<RwLock<ClientConfig>>,
+        opts: &ClientOpts,
         command_rx: &mut mpsc::Receiver<Message>,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<()>;
@@ -26,6 +27,7 @@ pub trait Plugin: Send + Sync {
         &self,
         endpoint: &ServerEndpoint,
         config: &Arc<RwLock<ClientConfig>>,
+        opts: &ClientOpts,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess>;
 }

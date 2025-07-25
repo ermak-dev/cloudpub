@@ -308,17 +308,40 @@ pub async fn download(
 
     let mut client = ClientBuilder::default();
 
+    let danger_accept_invalid_certs = config
+        .read()
+        .transport
+        .tls
+        .as_ref()
+        .and_then(|tls| tls.danger_ignore_certificate_verification)
+        .unwrap_or(false);
+
     if let Some(tls) = &config.read().transport.tls {
         let roots = load_roots(tls).context("Failed to load client config")?;
-        for cert in roots {
-            client = client.add_root_certificate(Certificate::from_der(&cert)?);
+        for cert_der in roots {
+            let cert = Certificate::from_der(&cert_der)?;
+            client = client.add_root_certificate(cert);
         }
         if tls.danger_ignore_certificate_verification.unwrap_or(false) {
-            client = client.danger_accept_invalid_certs(true);
+            client = client.danger_accept_invalid_certs(danger_accept_invalid_certs);
         }
     }
 
-    let client = client.build().context("Failed to create reqwest client")?;
+    let client = match client.build() {
+        Ok(client) => client,
+        Err(e) => {
+            error!(
+                "Failed to create reqwest client with system certificates:  {:?}",
+                e
+            );
+            warn!("Using default reqwest client");
+            reqwest::Client::builder()
+                .danger_accept_invalid_certs(danger_accept_invalid_certs)
+                .build()
+                .context("Failed to create defaut reqwest client")?
+        }
+    };
+
     // Reqwest setup
     let res = client
         .get(url)

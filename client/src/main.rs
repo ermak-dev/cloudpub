@@ -14,7 +14,7 @@ pub fn main() -> Result<()> {
     }
 
     let cli = Cli::parse();
-    let (_guard, config) = init(&cli, false).context("Failed to initialize config")?;
+    let (_guard, config) = init(&cli).context("Failed to initialize config")?;
     if let Err(err) = cli_main(cli, config) {
         error!("Exiting with error: {}", err);
         eprintln!("{}", err);

@@ -1,4 +1,4 @@
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ClientOpts};
 use crate::plugins::httpd::{setup_httpd, start_httpd};
 use crate::plugins::Plugin;
 use crate::shell::SubProcess;
@@ -24,6 +24,7 @@ impl Plugin for WebdavPlugin {
     async fn setup(
         &self,
         config: &Arc<RwLock<ClientConfig>>,
+        _opts: &ClientOpts,
         command_rx: &mut mpsc::Receiver<Message>,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<()> {
@@ -34,6 +35,7 @@ impl Plugin for WebdavPlugin {
         &self,
         endpoint: &ServerEndpoint,
         _config: &Arc<RwLock<ClientConfig>>,
+        _opts: &ClientOpts,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess> {
         let publish_dir = endpoint.client.as_ref().unwrap().local_addr.clone();

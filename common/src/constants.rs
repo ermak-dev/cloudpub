@@ -5,8 +5,13 @@ use std::time::Duration;
 pub const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 30;
 pub const DEFAULT_HEARTBEAT_TIMEOUT_SECS: u64 = 40;
 
+pub const DATA_BUFFER_SIZE: usize = 16384; // 16 KiB, a reasonable size for data buffers
+pub const DATA_CHANNEL_SIZE: usize = 1024; // Packets in data channel
+pub const CONTROL_CHANNEL_SIZE: usize = 1024; // Packets in control channel
+
 /// Client
 pub const DEFAULT_CLIENT_RETRY_INTERVAL_SECS: u64 = 60;
+pub const DEFAULT_CLIENT_DATA_CHANNEL_CAPACITY: u32 = DATA_BUFFER_SIZE as u32 * 4;
 
 /// Server
 pub const BACKLOG_SIZE: usize = 1024; // The capacity TCP incoming conn backlog

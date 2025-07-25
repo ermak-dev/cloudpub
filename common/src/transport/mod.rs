@@ -1,4 +1,4 @@
-use crate::config::{TcpConfig, TransportConfig};
+use crate::config::TransportConfig;
 use crate::utils::to_socket_addr;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -17,10 +17,8 @@ pub trait ProtobufStream {
     async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()>;
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use anyhow::bail;
-#[cfg(target_os = "linux")]
-use tokio::net::TcpStream;
 
 mod tcp;
 pub use tcp::{Listener, NamedSocketAddr, SocketAddr, Stream, TcpTransport};
@@ -109,36 +107,32 @@ pub struct SocketOpts {
     pub nodelay: Option<bool>,
     // keepalive must be Some or None at the same time, or the behavior will be platform-dependent
     pub keepalive: Option<Keepalive>,
+    // SO_PRIORITY
+    pub priority: Option<u8>,
 }
 
 impl SocketOpts {
-    fn none() -> SocketOpts {
-        SocketOpts {
-            nodelay: None,
-            keepalive: None,
-        }
-    }
-
     /// Socket options for the control channel
     pub fn for_control_channel() -> SocketOpts {
         SocketOpts {
-            nodelay: Some(true),  // Always set nodelay for the control channel
-            ..SocketOpts::none()  // None means do not change. Keepalive is set by TcpTransport
+            nodelay: Some(true), // Always set nodelay for the control channel
+            keepalive: None,
+            priority: Some(0), // Set high priority for the control channel
         }
     }
 
-    pub fn nodelay(nodelay: Option<bool>) -> SocketOpts {
+    pub fn for_data_channel() -> SocketOpts {
         SocketOpts {
-            nodelay,              // Always set nodelay for the control channel
-            ..SocketOpts::none()  // None means do not change. Keepalive is set by TcpTransport
+            nodelay: Some(true), // Always set nodelay for the data channel
+            keepalive: None,
+            priority: Some(0),
         }
     }
 }
 
-#[cfg(target_os = "linux")]
-pub fn set_reuse(s: &TcpStream) -> Result<()> {
+#[cfg(unix)]
+pub fn set_reuse(s: &dyn std::os::fd::AsRawFd) -> Result<()> {
     use libc;
-    use std::os::fd::AsRawFd;
     use std::{io, mem};
     unsafe {
         let optval: libc::c_int = 1;
@@ -156,22 +150,81 @@ pub fn set_reuse(s: &TcpStream) -> Result<()> {
     Ok(())
 }
 
-impl SocketOpts {
-    pub fn from_cfg(cfg: &TcpConfig) -> SocketOpts {
-        SocketOpts {
-            nodelay: Some(cfg.nodelay),
-            keepalive: Some(Keepalive {
-                keepalive_secs: cfg.keepalive_secs,
-                keepalive_interval: cfg.keepalive_interval,
-            }),
+#[cfg(target_os = "linux")]
+pub fn set_low_latency(s: &dyn std::os::fd::AsRawFd) -> Result<()> {
+    use libc;
+    use std::{io, mem};
+
+    unsafe {
+        let fd = s.as_raw_fd();
+        // 1. TCP_NODELAY - Disable Nagle's algorithm for immediate packet sending
+        let nodelay: libc::c_int = 1;
+        let ret = libc::setsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_NODELAY,
+            &nodelay as *const _ as *const libc::c_void,
+            mem::size_of_val(&nodelay) as libc::socklen_t,
+        );
+        if ret != 0 {
+            bail!(
+                "Failed to set TCP_NODELAY: {:?}",
+                io::Error::last_os_error()
+            );
+        }
+
+        // 2. TCP_QUICKACK - Enable quick ACK mode to reduce ACK delay
+        let quickack: libc::c_int = 1;
+        let ret = libc::setsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_QUICKACK,
+            &quickack as *const _ as *const libc::c_void,
+            mem::size_of_val(&quickack) as libc::socklen_t,
+        );
+        if ret != 0 {
+            bail!(
+                "Failed to set TCP_QUICKACK: {:?}",
+                io::Error::last_os_error()
+            );
+        }
+    }
+    Ok(())
+}
+
+// Set socket priority: 0 - lowest (default), 7 - higest
+#[cfg(target_os = "linux")]
+pub fn set_priority(s: &dyn std::os::fd::AsRawFd, priority: libc::c_int) -> Result<()> {
+    use libc;
+    use std::{io, mem};
+
+    unsafe {
+        let fd = s.as_raw_fd();
+
+        // 1. SO_PRIORITY - Set high priority for the socket
+        let ret = libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PRIORITY,
+            &priority as *const _ as *const libc::c_void,
+            mem::size_of_val(&priority) as libc::socklen_t,
+        );
+        if ret != 0 {
+            bail!(
+                "Failed to set SO_PRIORITY: {:?}",
+                io::Error::last_os_error()
+            );
         }
     }
 
+    Ok(())
+}
+
+impl SocketOpts {
     pub fn apply(&self, conn: &Stream) {
         if let Some(v) = self.keepalive {
             let keepalive_duration = Duration::from_secs(v.keepalive_secs);
             let keepalive_interval = Duration::from_secs(v.keepalive_interval);
-
             if let Err(e) = tcp::try_set_tcp_keepalive(conn, keepalive_duration, keepalive_interval)
                 .with_context(|| "Failed to set keepalive")
             {
@@ -179,20 +232,43 @@ impl SocketOpts {
             }
         }
 
-        #[allow(irrefutable_let_patterns)]
-        if let Stream::Tcp(conn) = conn {
-            if let Some(nodelay) = self.nodelay {
-                if let Err(e) = conn
-                    .set_nodelay(nodelay)
-                    .with_context(|| "Failed to set nodelay")
-                {
+        match conn {
+            Stream::Tcp(conn) => {
+                #[cfg(unix)]
+                if let Err(e) = set_reuse(conn) {
                     error!("{:#}", e);
                 }
+                if let Some(nodelay) = self.nodelay {
+                    #[cfg(not(target_os = "linux"))]
+                    if let Err(e) = conn
+                        .set_nodelay(nodelay)
+                        .with_context(|| "Failed to set nodelay")
+                    {
+                        error!("{:#}", e);
+                    }
+                    #[cfg(target_os = "linux")]
+                    if nodelay {
+                        if let Err(e) = set_low_latency(conn) {
+                            error!("Failed to set low latency options: {:#}", e);
+                        }
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(priority) = self.priority {
+                    if let Err(e) = set_priority(conn, priority as libc::c_int) {
+                        error!("Failed to set socket priority: {:#}", e);
+                    }
+                }
             }
-
-            #[cfg(target_os = "linux")]
-            if let Err(e) = set_reuse(conn) {
-                error!("{:#}", e);
+            #[cfg(unix)]
+            Stream::Unix(conn) =>
+            {
+                #[cfg(target_os = "linux")]
+                if let Some(priority) = self.priority {
+                    if let Err(e) = set_priority(conn, priority as libc::c_int) {
+                        error!("Failed to set socket priority: {:#}", e);
+                    }
+                }
             }
         }
     }

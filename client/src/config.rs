@@ -104,6 +104,14 @@ impl std::str::FromStr for Platform {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub struct ClientOpts {
+    pub gui: bool,
+    pub credentials: Option<(String, String)>,
+    pub transient: bool,
+    pub secondary: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct ClientConfig {
     // This fields are not persistent
@@ -111,12 +119,8 @@ pub struct ClientConfig {
     config_path: PathBuf,
     #[serde(skip)]
     pub readonly: bool,
-    #[serde(skip)]
-    pub gui: bool,
-    #[serde(skip)]
-    pub credentials: Option<(String, String)>,
-    // Next fields are persistent
     pub agent_id: String,
+    pub hwid: Option<String>,
     pub server: Url,
     pub token: Option<MaskedString>,
     pub heartbeat_timeout: u64,
@@ -126,7 +130,6 @@ pub struct ClientConfig {
     pub minecraft_server: Option<String>,
     pub minecraft_java_opts: Option<String>,
     pub minimize_to_tray_on_close: Option<bool>,
-    pub hwid: Option<String>,
     pub transport: TransportConfig,
 }
 
@@ -135,7 +138,7 @@ impl ClientConfig {
         &self.config_path
     }
 
-    pub fn from_file(path: &PathBuf, readonly: bool, gui: bool) -> Result<Self> {
+    pub fn from_file(path: &PathBuf, readonly: bool) -> Result<Self> {
         if !path.exists() {
             let default_config = Self::default();
             debug!("Creating default config at {:?}", default_config);
@@ -152,7 +155,6 @@ impl ClientConfig {
 
         cfg.config_path = path.clone();
         cfg.readonly = readonly;
-        cfg.gui = gui;
         Ok(cfg)
     }
 
@@ -185,11 +187,11 @@ impl ClientConfig {
         Ok(())
     }
 
-    pub fn load(cfg_name: &str, user_dir: bool, readonly: bool, gui: bool) -> Result<Self> {
+    pub fn load(cfg_name: &str, user_dir: bool, readonly: bool) -> Result<Self> {
         let mut config_path = Self::get_config_dir(user_dir)?;
         config_path.push(cfg_name);
 
-        Self::from_file(&config_path, readonly, gui)
+        Self::from_file(&config_path, readonly)
     }
 
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
@@ -295,6 +297,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             agent_id: Uuid::new_v4().to_string(),
+            hwid: None,
             config_path: PathBuf::new(),
             server: crate::t!("server").parse().unwrap(),
             token: None,
@@ -307,9 +310,6 @@ impl Default for ClientConfig {
             minimize_to_tray_on_close: Some(true),
             transport: TransportConfig::default(),
             readonly: false,
-            gui: false,
-            hwid: None,
-            credentials: None,
         }
     }
 }

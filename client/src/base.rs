@@ -1,6 +1,6 @@
 use crate::client::run_client;
 use crate::commands::{Commands, ServiceAction};
-pub use crate::config::ClientConfig;
+pub use crate::config::{ClientConfig, ClientOpts};
 use crate::ping;
 use crate::service::{create_service_manager, ServiceConfig, ServiceStatus};
 use crate::shell::get_cache_dir;
@@ -9,8 +9,8 @@ use clap::Parser;
 use common::logging::{init_log, WorkerGuard};
 use common::protocol::message::Message;
 use common::protocol::{
-    ConnectState, EndpointClear, EndpointList, EndpointRemove, EndpointStartAll, EndpointStop,
-    ErrorKind, PerformUpgrade, Stop,
+    ConnectState, EndpointClear, EndpointList, EndpointRemove, EndpointStart, EndpointStartAll,
+    EndpointStop, ErrorKind, PerformUpgrade, Stop,
 };
 use common::version::{LONG_VERSION, VERSION};
 use dirs::cache_dir;
@@ -18,10 +18,10 @@ use futures::future::FutureExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use std::env;
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const CONFIG_FILE: &str = "client.toml";
 
@@ -107,9 +107,11 @@ fn handle_service_command(action: &ServiceAction, config: &ClientConfig) -> Resu
     Ok(())
 }
 
-pub fn init(args: &Cli, gui: bool) -> Result<(WorkerGuard, Arc<RwLock<ClientConfig>>)> {
+pub fn init(args: &Cli) -> Result<(WorkerGuard, Arc<RwLock<ClientConfig>>)> {
     // Raise `nofile` limit on linux and mac
-    fdlimit::raise_fd_limit();
+    if let Err(err) = fdlimit::raise_fd_limit() {
+        warn!("Failed to raise file descriptor limit: {}", err);
+    }
 
     // Create log directory
     let log_dir = cache_dir().context("Can't get cache dir")?.join("cloudpub");
@@ -127,9 +129,9 @@ pub fn init(args: &Cli, gui: bool) -> Result<(WorkerGuard, Arc<RwLock<ClientConf
     .context("Failed to initialize logging")?;
 
     let config = if let Some(path) = args.conf.as_ref() {
-        ClientConfig::from_file(&path.into(), args.readonly, gui)?
+        ClientConfig::from_file(&path.into(), args.readonly)?
     } else {
-        ClientConfig::load(CONFIG_FILE, true, args.readonly, gui)?
+        ClientConfig::load(CONFIG_FILE, true, args.readonly)?
     };
     let config = Arc::new(RwLock::new(config));
     Ok((guard, config))
@@ -168,6 +170,7 @@ pub async fn main_loop(
     stdout: Option<broadcast::Sender<String>>,
     stderr: Option<broadcast::Sender<String>>,
 ) -> Result<()> {
+    let mut opts = ClientOpts::default();
     let write_stdout = |res: String| {
         if let Some(tx) = stdout.as_ref() {
             tx.send(res).ok();
@@ -188,7 +191,7 @@ pub async fn main_loop(
 
     let mut pings = 1;
 
-    match &mut cli.command {
+    opts.secondary = match &mut cli.command {
         Commands::Set(set_args) => {
             config.write().set(&set_args.key, &set_args.value)?;
             return Ok(());
@@ -242,7 +245,8 @@ pub async fn main_loop(
                     }
                 }
             };
-            config.write().credentials = Some((email, password))
+            opts.credentials = Some((email, password));
+            true
         }
         Commands::Logout => {
             config.write().token = None;
@@ -256,30 +260,40 @@ pub async fn main_loop(
         Commands::Register(publish_args) => {
             config.read().validate()?;
             publish_args.parse()?;
+            true
         }
         Commands::Publish(publish_args) => {
             config.read().validate()?;
             publish_args.parse()?;
+            false
         }
+
+        Commands::Ping(_) => {
+            opts.transient = true;
+            true
+        }
+
+        Commands::Run => false,
+
         Commands::Unpublish(_)
-        | Commands::Run
-        | Commands::Stop
+        | Commands::Start(_)
+        | Commands::Stop(_)
         | Commands::Break
-        | Commands::Ping(_)
         | Commands::Ls
         | Commands::Clean
         | Commands::Upgrade => {
             config.read().validate()?;
+            true
         }
         Commands::Service { action } => {
             return handle_service_command(action, &config.read());
         }
-    }
+    };
 
     debug!("Config: {:?}", config);
 
     tokio::spawn(async move {
-        if let Err(err) = run_client(config.clone(), command_rx, result_tx)
+        if let Err(err) = run_client(config.clone(), opts, command_rx, result_tx)
             .boxed()
             .await
         {
@@ -362,10 +376,16 @@ pub async fn main_loop(
 
             Message::EndpointStopAck(ep) => {
                 write_stdout(crate::t!("service-stopped", "guid" => ep.guid));
+                if matches!(cli.command, Commands::Unpublish(_)) {
+                    break;
+                }
             }
 
             Message::EndpointRemoveAck(ep) => {
                 write_stdout(crate::t!("service-removed", "guid" => ep.guid));
+                if matches!(cli.command, Commands::Unpublish(_)) {
+                    break;
+                }
             }
 
             Message::ConnectState(st) => match st.try_into().unwrap_or(ConnectState::Connecting) {
@@ -405,19 +425,25 @@ pub async fn main_loop(
                                 .await?;
                         }
                         Commands::Unpublish(ref args) => {
-                            if args.remove {
-                                command_tx
-                                    .send(Message::EndpointRemove(EndpointRemove {
-                                        guid: args.guid.clone(),
-                                    }))
-                                    .await?;
-                            } else {
-                                command_tx
-                                    .send(Message::EndpointStop(EndpointStop {
-                                        guid: args.guid.clone(),
-                                    }))
-                                    .await?;
-                            }
+                            command_tx
+                                .send(Message::EndpointRemove(EndpointRemove {
+                                    guid: args.guid.clone(),
+                                }))
+                                .await?;
+                        }
+                        Commands::Start(ref args) => {
+                            command_tx
+                                .send(Message::EndpointGuidStart(EndpointStart {
+                                    guid: args.guid.clone(),
+                                }))
+                                .await?;
+                        }
+                        Commands::Stop(ref args) => {
+                            command_tx
+                                .send(Message::EndpointStop(EndpointStop {
+                                    guid: args.guid.clone(),
+                                }))
+                                .await?;
                         }
                         Commands::Ping(ref args) => {
                             pings = args.num.unwrap_or(1);
@@ -462,17 +488,37 @@ pub async fn main_loop(
                     write_stdout(crate::t!("no-registered-services"));
                 } else {
                     let mut output = String::new();
+                    let use_colors = io::stderr().is_terminal();
+
                     for ep in &list.endpoints {
-                        output.push_str(&format!("{}: {}\n", ep.guid, ep));
+                        let status = ep.status.as_deref().unwrap_or("unknown");
+                        let colored_status = if use_colors {
+                            match status {
+                                "online" => format!("\x1b[32m{}\x1b[0m ", status), // Green
+                                "offline" => format!("\x1b[31m{}\x1b[0m", status), // Red
+                                "starting" => format!("\x1b[33m{}\x1b[0m", status), // Yellow
+                                "stopping" => format!("\x1b[33m{}\x1b[0m", status), // Yellow
+                                "error" => format!("\x1b[31m{}\x1b[0m   ", status), // Red
+                                _ => status.to_string(),
+                            }
+                        } else {
+                            status.to_string()
+                        };
+
+                        output.push_str(&format!("{} {} {}\n", colored_status, ep.guid, ep));
                     }
                     write_stdout(output);
                 }
-                break;
+                if !matches!(cli.command, Commands::Run) {
+                    break;
+                }
             }
 
             Message::EndpointClearAck(_) => {
                 write_stdout(crate::t!("all-services-removed"));
-                break;
+                if !matches!(cli.command, Commands::Run) {
+                    break;
+                }
             }
 
             other => {

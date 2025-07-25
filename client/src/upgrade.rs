@@ -694,6 +694,7 @@ async fn handle_cli_update(
 
 pub async fn handle_upgrade_download(
     version: &str,
+    gui: bool,
     config: Arc<RwLock<ClientConfig>>,
     command_rx: &mut mpsc::Receiver<Message>,
     result_tx: &mpsc::Sender<Message>,
@@ -705,7 +706,7 @@ pub async fn handle_upgrade_download(
     // Download the upgrade
     let cache_dir = get_cache_dir("updates").unwrap();
 
-    let download_type = if config.read().gui {
+    let download_type = if gui {
         #[cfg(target_os = "linux")]
         {
             // Try to detect package type and use appropriate installer
@@ -829,11 +830,12 @@ pub async fn handle_upgrade_install(
 pub async fn handle_upgrade_available(
     version: &str,
     config: Arc<RwLock<ClientConfig>>,
+    gui: bool,
     command_rx: &mut mpsc::Receiver<Message>,
     result_tx: &mpsc::Sender<Message>,
 ) -> Result<()> {
     let (output_path, download_type, filename) =
-        handle_upgrade_download(version, config, command_rx, result_tx).await?;
+        handle_upgrade_download(version, gui, config, command_rx, result_tx).await?;
 
     handle_upgrade_install(output_path, download_type, filename, command_rx, result_tx).await?;
 

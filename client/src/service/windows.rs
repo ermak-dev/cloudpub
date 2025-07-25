@@ -251,7 +251,7 @@ pub async fn run_app(stop_tx: broadcast::Sender<()>) {
         readonly: false,
         log_level: "debug".to_string(),
     };
-    let (_guard, config) = match init(&cli, false).context("Failed to initialize config") {
+    let (_guard, config) = match init(&cli).context("Failed to initialize config") {
         Ok(r) => r,
         Err(err) => {
             tracing::error!("Failed to initialize: {:?}", err);

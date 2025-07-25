@@ -4,8 +4,6 @@ use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
 use url::Url;
 
-use crate::constants::{DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_SECS, DEFAULT_NODELAY};
-
 pub use crate::protocol::Protocol;
 
 /// String with Debug implementation that emits "MASKED"
@@ -75,24 +73,9 @@ impl Default for WebsocketConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 pub struct TcpConfig {
-    pub nodelay: bool,
-    pub keepalive_secs: u64,
-    pub keepalive_interval: u64,
     pub proxy: Option<Url>,
-}
-
-impl Default for TcpConfig {
-    fn default() -> Self {
-        Self {
-            nodelay: DEFAULT_NODELAY,
-            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
-            keepalive_interval: DEFAULT_KEEPALIVE_INTERVAL,
-            proxy: None,
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]

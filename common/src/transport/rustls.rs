@@ -9,6 +9,7 @@ use std::fs;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
+use x509_parser::prelude::*;
 
 use crate::protocol::v2::message::Message as ProtocolMessage;
 use crate::protocol::v2::{read_message, write_message};
@@ -27,6 +28,52 @@ use tokio_rustls::rustls::{
 pub(crate) use tokio_rustls::TlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_unix_tcp::NamedSocketAddr;
+
+fn algorithm_name(oid: &der_parser::oid::Oid) -> Option<&'static str> {
+    match oid.to_string().as_str() {
+        "1.2.840.113549.1.1.11" => Some("SHA256withRSA"),
+        "1.2.840.113549.1.1.5" => Some("SHA1withRSA"),
+        "1.2.840.113549.1.1.1" => Some("RSA"),
+        "1.2.840.10045.4.3.2" => Some("SHA256withECDSA"),
+        "1.2.840.10045.4.3.3" => Some("SHA384withECDSA"),
+        "1.2.840.10045.4.3.4" => Some("SHA512withECDSA"),
+        "1.2.840.10045.2.1" => Some("ECDSA"),
+        "1.2.840.113549.1.1.12" => Some("SHA384withRSA"),
+        "1.2.840.113549.1.1.13" => Some("SHA512withRSA"),
+        _ => None,
+    }
+}
+
+fn process_certificate<'a>(
+    cert_der: CertificateDer<'a>,
+    cert_type: &str,
+) -> Option<CertificateDer<'a>> {
+    // Parse the certificate to get more details
+    if let Ok((_, parsed_cert)) = X509Certificate::from_der(&cert_der) {
+        if let Some(algorithm) = algorithm_name(&parsed_cert.signature_algorithm.algorithm) {
+            tracing::debug!(
+                "Adding {} certificate - Subject: {}, Issuer: {}, Algorithm: {}",
+                cert_type,
+                parsed_cert.subject(),
+                parsed_cert.issuer(),
+                algorithm
+            );
+            Some(cert_der)
+        } else {
+            tracing::error!(
+                "Skipping {} certificate with unknown algorithm - Subject: {}, Issuer: {}, OID: {}",
+                cert_type,
+                parsed_cert.subject(),
+                parsed_cert.issuer(),
+                parsed_cert.signature_algorithm.algorithm
+            );
+            None
+        }
+    } else {
+        tracing::info!("Adding {} certificate: {} bytes", cert_type, cert_der.len());
+        Some(cert_der)
+    }
+}
 
 pub struct TlsTransport {
     tcp: TcpTransport,
@@ -75,7 +122,10 @@ pub fn load_roots(config: &TlsConfig) -> Result<Vec<CertificateDer>> {
             fs::File::open(path).context("Failed to open trusted root file")?,
         );
         for cert in rustls_pemfile::certs(&mut reader) {
-            root_certs.push(cert.context("Failed to parse trusted root cert")?);
+            let cert_der = cert.context("Failed to parse trusted root cert")?;
+            if let Some(processed_cert) = process_certificate(cert_der, "trusted root") {
+                root_certs.push(processed_cert);
+            }
         }
     }
 
@@ -83,11 +133,16 @@ pub fn load_roots(config: &TlsConfig) -> Result<Vec<CertificateDer>> {
     let mut reader = std::io::BufReader::new(static_roots);
 
     for cert in rustls_pemfile::certs(&mut reader) {
-        root_certs.push(cert.context("Failed to parse static root cert")?);
+        let cert_der = cert.context("Failed to parse static root cert")?;
+        if let Some(processed_cert) = process_certificate(cert_der, "static root") {
+            root_certs.push(processed_cert);
+        }
     }
 
-    for cert in rustls_native_certs::load_native_certs().context("Failed to load native certs")? {
-        root_certs.push(cert);
+    for cert in rustls_native_certs::load_native_certs().certs {
+        if let Some(processed_cert) = process_certificate(cert, "native") {
+            root_certs.push(processed_cert);
+        }
     }
     Ok(root_certs)
 }
@@ -174,6 +229,8 @@ impl Transport for TlsTransport {
     type Stream = TlsStream<Stream>;
 
     fn new(config: &TransportConfig) -> Result<Self> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         let tcp = TcpTransport::new(config)?;
         let config = config
             .tls
