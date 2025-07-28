@@ -82,7 +82,7 @@ RUN     rustup component add rust-src --toolchain nightly && \
         --no-default-features \
         -Z build-std=std,panic_abort,core,alloc \
         -Z build-std-features=panic_immediate_abort \
-        --recipe-path $HOME/recipe.json || true
+        --recipe-path $HOME/recipe.json
 
 COPY    --chown=cloudpub:cloudpub . $HOME
 USER    cloudpub:cloudpub
@@ -121,7 +121,6 @@ RUN     mkdir -p artifacts/mipsel && \
         -Z build-std=std,panic_abort,core,alloc \
         -Z build-std-features=panic_immediate_abort && \
         cp target/mipsel-unknown-linux-gnu/minimal/client artifacts/mipsel/clo && \
-        chmod +x artifacts/mipsel/clo && \
         file artifacts/mipsel/clo
 
 FROM scratch AS artifacts
