@@ -31,9 +31,16 @@ RUN     apt install -y protobuf-compiler
 #       Install Windows cross-compilation tools
 RUN     apt install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
 
+#       Install MIPS (little-endian) toolchain
+RUN     apt-get update && apt install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross
+
 USER    cloudpub:cloudpub
 
 RUN     cargo install cargo-chef
+
+# Add MIPS target using nightly toolchain as it might have more targets
+RUN     rustup toolchain install nightly
+RUN     rustup target add --toolchain nightly mipsel-unknown-linux-gnu || true
 
 RUN     rustup target add arm-unknown-linux-musleabi
 RUN     rustup target add armv5te-unknown-linux-musleabi
@@ -56,6 +63,7 @@ ENV     CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABI_LINKER=/usr/bin/arm-linux-gnueab
 ENV     CARGO_TARGET_ARMV5TE_UNKNOWN_LINUX_MUSLEABI_LINKER=/usr/bin/arm-linux-gnueabi-gcc
 ENV     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/bin/aarch64-linux-gnu-gcc
 ENV     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/usr/bin/x86_64-w64-mingw32-gcc
+ENV     CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/mipsel-linux-gnu-gcc
 
 WORKDIR $HOME
 
@@ -64,6 +72,17 @@ RUN     cargo chef cook --bin client --profile minimal --target arm-unknown-linu
 RUN     cargo chef cook --bin client --profile minimal --target armv5te-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
 RUN     cargo chef cook --bin client --profile minimal --target aarch64-unknown-linux-musl --no-default-features --recipe-path $HOME/recipe.json
 RUN     cargo chef cook --bin client --profile minimal --target x86_64-pc-windows-gnu --recipe-path $HOME/recipe.json
+# Try to build with nightly for MIPS (little-endian)
+RUN     rustup component add rust-src --toolchain nightly && \
+        RUSTFLAGS="-C target-feature=+crt-static -C linker=/usr/bin/mipsel-linux-gnu-gcc" \
+        cargo +nightly chef cook \
+        --bin client \
+        --profile minimal \
+        --target mipsel-unknown-linux-gnu \
+        --no-default-features \
+        -Z build-std=std,panic_abort,core,alloc \
+        -Z build-std-features=panic_immediate_abort \
+        --recipe-path $HOME/recipe.json
 
 COPY    --chown=cloudpub:cloudpub . $HOME
 USER    cloudpub:cloudpub
@@ -90,6 +109,19 @@ RUN     mkdir -p artifacts/armv5te && \
         cargo build -p client --target armv5te-unknown-linux-musleabi --profile minimal --no-default-features && \
         cp target/armv5te-unknown-linux-musleabi/minimal/client artifacts/armv5te/clo
 
+# Build MIPS (little-endian) target with nightly toolchain and build-std
+RUN     mkdir -p artifacts/mipsel && \
+        rustup component add rust-src --toolchain nightly && \
+        RUSTFLAGS="-C target-feature=+crt-static -C linker=/usr/bin/mipsel-linux-gnu-gcc" \
+        cargo +nightly build \
+        -p client \
+        --target mipsel-unknown-linux-gnu \
+        --profile minimal \
+        --no-default-features \
+        -Z build-std=std,panic_abort,core,alloc \
+        -Z build-std-features=panic_immediate_abort && \
+        cp target/mipsel-unknown-linux-gnu/minimal/client artifacts/mipsel/clo && \
+        file artifacts/mipsel/clo
 
 FROM scratch AS artifacts
 COPY --from=builder /home/cloudpub/artifacts /artifacts
