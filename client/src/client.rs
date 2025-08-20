@@ -12,7 +12,7 @@ use common::transport::{AddrMaybeCached, SocketOpts, Transport, WebsocketTranspo
 use common::utils::{
     get_platform, is_tcp_port_available, proto_to_socket_addr, socket_addr_to_proto, udp_connect,
 };
-use common::version::VERSION;
+use common::VERSION;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -34,7 +34,6 @@ use crate::shell::SubProcess;
 use crate::upgrade::handle_upgrade_available;
 use bytes::Bytes;
 use common::transport::ProtobufStream;
-use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 
 #[cfg(feature = "plugins")]
 use crate::plugins::registry::PluginRegistry;
@@ -170,23 +169,6 @@ impl<T: 'static + Transport> Client<T> {
 
             T::hint(&conn, SocketOpts::for_control_channel());
 
-            // Send hello
-            let hwid = IdBuilder::new(Encryption::SHA256)
-                .add_component(HWIDComponent::OSName)
-                .add_component(HWIDComponent::SystemID)
-                .add_component(HWIDComponent::MachineName)
-                .add_component(HWIDComponent::CPUID)
-                .build("cloudpub")
-                .unwrap_or_default();
-
-            let hwid = self
-                .config
-                .read()
-                .hwid
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or(hwid);
-
             let (email, password) = if let Some(ref cred) = self.opts.credentials {
                 (cred.0.clone(), cred.1.clone())
             } else {
@@ -200,6 +182,8 @@ impl<T: 'static + Transport> Client<T> {
                 .clone()
                 .unwrap_or_default()
                 .to_string();
+
+            let hwid = self.config.read().get_hwid();
 
             let agent_info = AgentInfo {
                 agent_id: self.config.read().agent_id.clone(),

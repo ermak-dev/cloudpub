@@ -12,7 +12,7 @@ use common::protocol::{
     ConnectState, EndpointClear, EndpointList, EndpointRemove, EndpointStart, EndpointStartAll,
     EndpointStop, ErrorKind, PerformUpgrade, Stop,
 };
-use common::version::{LONG_VERSION, VERSION};
+use common::{LONG_VERSION, VERSION};
 use dirs::cache_dir;
 use futures::future::FutureExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -199,6 +199,15 @@ pub async fn main_loop(
         Commands::Get(get_args) => {
             let value = config.read().get(&get_args.key)?;
             write_stdout(value);
+            return Ok(());
+        }
+        Commands::Options => {
+            let options = config.read().get_all_options();
+            let mut output = String::new();
+            for (key, value) in options {
+                output.push_str(&format!("{}: {}\n", key, value));
+            }
+            write_stdout(output.trim_end().to_string());
             return Ok(());
         }
         Commands::Purge => {

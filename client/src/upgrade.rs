@@ -117,6 +117,28 @@ impl DownloadConfig {
                 },
             );
             platforms.insert(
+                "mips".to_string(),
+                PlatformDownloads {
+                    gui: None,
+                    cli: Some(format!(
+                        "{base_url}clo-{version}-{branch}-linux-mips.tar.gz"
+                    )),
+                    rpm: None,
+                    deb: None,
+                },
+            );
+            platforms.insert(
+                "mipsel".to_string(),
+                PlatformDownloads {
+                    gui: None,
+                    cli: Some(format!(
+                        "{base_url}clo-{version}-{branch}-linux-mipsel.tar.gz"
+                    )),
+                    rpm: None,
+                    deb: None,
+                },
+            );
+            platforms.insert(
                 "i686".to_string(),
                 PlatformDownloads {
                     gui: None,
@@ -296,6 +318,7 @@ pub fn install_msi_package(msi_path: &std::path::Path) -> Result<()> {
 
     let temp_dir = std::env::temp_dir();
     let batch_script = temp_dir.join("cloudpub_install_msi.bat");
+    let current_exe = std::env::current_exe()?;
 
     let script_content = format!(
         r#"@echo off
@@ -309,8 +332,10 @@ if errorlevel 1 (
 )
 echo Installation completed successfully
 del "%~f0"
+start "" "{}"
 "#,
-        msi_path.display()
+        msi_path.display(),
+        current_exe.display()
     );
 
     std::fs::write(&batch_script, script_content)

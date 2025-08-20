@@ -114,7 +114,7 @@ fn load_server_config(config: &TlsConfig) -> Result<Option<ServerConfig>> {
     }
 }
 
-pub fn load_roots(config: &TlsConfig) -> Result<Vec<CertificateDer<'_>>> {
+pub fn load_roots(config: &TlsConfig) -> Result<Vec<CertificateDer>> {
     let mut root_certs = Vec::new();
 
     if let Some(path) = config.trusted_root.as_ref() {

@@ -34,5 +34,30 @@ pub struct {} {{",
 
     std::fs::write(format!("{}/protocol.rs", out_dir), generated)?;
 
+    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_DOMAIN");
+    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_VERSION");
+    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_ONPREM");
+    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_SITE_NAME");
+
+    std::fs::write(
+        format!("{}/build-vars.rs", out_dir),
+        format!(
+            r#"// Build variables
+pub const DOMAIN: &str = {:?};
+pub const VERSION: &str = {:?};
+pub const LONG_VERSION: &str = "{}-{} ({})";
+pub const SITE_NAME: &str = {:?};
+pub const ONPREM: bool = {};
+"#,
+            std::env::var("NEXT_PUBLIC_DOMAIN").unwrap(),
+            std::env::var("NEXT_PUBLIC_VERSION").unwrap(),
+            std::env::var("NEXT_PUBLIC_VERSION").unwrap(),
+            chrono::Local::now().format("%Y%m%d%H%M%S"),
+            std::env::var("NEXT_PUBLIC_DOMAIN").unwrap(),
+            std::env::var("NEXT_PUBLIC_SITE_NAME").unwrap(),
+            std::env::var("NEXT_PUBLIC_ONPREM").unwrap()
+        ),
+    )?;
+
     Ok(())
 }

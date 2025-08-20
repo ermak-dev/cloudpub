@@ -224,6 +224,21 @@ pub mod v2 {
         }
     }
 
+    impl Endpoint for ServerEndpoint {
+        fn credentials(&self) -> String {
+            String::new()
+        }
+
+        fn as_url(&self) -> String {
+            format!(
+                "{}://{}:{}",
+                str_enum::<Protocol>(self.remote_proto),
+                self.remote_addr,
+                self.remote_port,
+            )
+        }
+    }
+
     impl Display for ServerEndpoint {
         fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
             let client = self.client.as_ref().unwrap();

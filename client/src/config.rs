@@ -1,10 +1,14 @@
 use anyhow::{bail, Context, Result};
 use common::constants::DEFAULT_HEARTBEAT_TIMEOUT_SECS;
+use common::DOMAIN;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
+use std::str::FromStr;
 
+use crate::options::ConfigOption;
 pub use common::config::{MaskedString, TransportConfig};
 use lazy_static::lazy_static;
+use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 use std::collections::HashMap;
 use std::fs::{self, create_dir_all, File};
 use std::io::Write;
@@ -130,6 +134,7 @@ pub struct ClientConfig {
     pub minecraft_server: Option<String>,
     pub minecraft_java_opts: Option<String>,
     pub minimize_to_tray_on_close: Option<bool>,
+    pub minimize_to_tray_on_start: Option<bool>,
     pub transport: TransportConfig,
 }
 
@@ -195,93 +200,17 @@ impl ClientConfig {
     }
 
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
-        match key {
-            "server" => self.server = value.parse().context("Invalid server URL")?,
-            "token" => self.token = Some(MaskedString::from(value)),
-            "heartbeat_timeout" => {
-                self.heartbeat_timeout = value.parse().context("Invalid heartbeat_timeout")?
-            }
-            "1c_home" => {
-                if value.is_empty() {
-                    self.one_c_home = None
-                } else {
-                    self.one_c_home = Some(value.to_string())
-                }
-            }
-            "1c_platform" => {
-                if value.is_empty() {
-                    self.one_c_platform = None
-                } else {
-                    self.one_c_platform = Some(value.parse().context("Invalid platform")?)
-                }
-            }
-            "1c_publish_dir" => {
-                if value.is_empty() {
-                    self.one_c_publish_dir = None
-                } else {
-                    self.one_c_publish_dir = Some(value.to_string())
-                }
-            }
-            "unsafe_tls" => {
-                let allow = value.parse().context("Invalid boolean value")?;
-                if self.transport.tls.is_none() {
-                    self.transport.tls = Some(Default::default());
-                }
-
-                if let Some(tls) = self.transport.tls.as_mut() {
-                    tls.danger_ignore_certificate_verification = Some(allow);
-                }
-            }
-            "minecraft_server" => {
-                if value.is_empty() {
-                    self.minecraft_server = None
-                } else {
-                    self.minecraft_server = Some(value.to_string())
-                }
-            }
-            "minecraft_java_opts" => {
-                if value.is_empty() {
-                    self.minecraft_java_opts = None
-                } else {
-                    self.minecraft_java_opts = Some(value.to_string())
-                }
-            }
-            "minimize_to_tray_on_close" => {
-                let minimize = value.parse().context("Invalid boolean value")?;
-                self.minimize_to_tray_on_close = Some(minimize);
-            }
-            _ => bail!("Unknown key: {}", key),
-        }
-        self.save()?;
-        Ok(())
+        let option = ConfigOption::from_str(key)?;
+        self.set_option(option, value)
     }
 
     pub fn get(&self, key: &str) -> Result<String> {
-        match key {
-            "server" => Ok(self.server.to_string()),
-            "token" => Ok(self
-                .token
-                .as_ref()
-                .map_or("".to_string(), |t| t.to_string())),
-            "heartbeat_timeout" => Ok(self.heartbeat_timeout.to_string()),
-            "1c_home" => Ok(self.one_c_home.clone().unwrap_or_default()),
-            "1c_platform" => Ok(self
-                .one_c_platform
-                .as_ref()
-                .map(|p| p.to_string())
-                .unwrap_or_default()),
-            "1c_publish_dir" => Ok(self.one_c_publish_dir.clone().unwrap_or_default()),
-            "minecraft_server" => Ok(self.minecraft_server.clone().unwrap_or_default()),
-            "minecraft_java_opts" => Ok(self.minecraft_java_opts.clone().unwrap_or_default()),
-            "minimize_to_tray_on_close" => Ok(self
-                .minimize_to_tray_on_close
-                .map_or("false".to_string(), |v| v.to_string())),
-            "unsafe_tls" => Ok(self.transport.tls.as_ref().map_or("".to_string(), |tls| {
-                tls.danger_ignore_certificate_verification
-                    .map_or("".to_string(), |v| v.to_string())
-            })),
-            _ => bail!("Unknown key: {}", key),
-        }
+        let option = ConfigOption::from_str(key)?;
+        self.get_option(option)
+    }
+
+    pub fn get_all_options(&self) -> Vec<(String, String)> {
+        self.get_all_config_options()
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -291,6 +220,21 @@ impl ClientConfig {
         TransportConfig::validate(&self.transport, false)?;
         Ok(())
     }
+
+    pub fn get_hwid(&self) -> String {
+        self.hwid
+            .as_ref()
+            .unwrap_or(
+                &IdBuilder::new(Encryption::SHA256)
+                    .add_component(HWIDComponent::OSName)
+                    .add_component(HWIDComponent::SystemID)
+                    .add_component(HWIDComponent::MachineName)
+                    .add_component(HWIDComponent::CPUID)
+                    .build("cloudpub")
+                    .unwrap_or(self.agent_id.clone()),
+            )
+            .to_string()
+    }
 }
 
 impl Default for ClientConfig {
@@ -299,7 +243,7 @@ impl Default for ClientConfig {
             agent_id: Uuid::new_v4().to_string(),
             hwid: None,
             config_path: PathBuf::new(),
-            server: crate::t!("server").parse().unwrap(),
+            server: format!("https://{}", DOMAIN).parse().unwrap(),
             token: None,
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT_SECS,
             one_c_home: None,
@@ -308,6 +252,7 @@ impl Default for ClientConfig {
             minecraft_server: None,
             minecraft_java_opts: None,
             minimize_to_tray_on_close: Some(true),
+            minimize_to_tray_on_start: Some(false),
             transport: TransportConfig::default(),
             readonly: false,
         }

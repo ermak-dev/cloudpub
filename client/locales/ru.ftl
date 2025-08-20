@@ -1,5 +1,3 @@
-server = https://cloudpub.ru
-# Error messages
 error-network = Ошибка сети, пробуем еще раз.
 error-process-terminated = Процесс сервера был неожиданно завершен
 error-auth-missing = Отсутствует токен авторизации

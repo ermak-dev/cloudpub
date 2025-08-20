@@ -7,7 +7,8 @@ pub mod protocol;
 pub mod routing;
 pub mod transport;
 pub mod utils;
-pub mod version;
+
+include!(concat!(env!("OUT_DIR"), "/build-vars.rs"));
 
 #[cfg(feature = "rustls")]
 pub use rustls_pemfile;

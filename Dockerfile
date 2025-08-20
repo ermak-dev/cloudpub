@@ -57,12 +57,18 @@ RUN     cargo chef prepare --recipe-path recipe.json
 ##########################################
 FROM    dev AS builder
 COPY    --from=planner $HOME/recipe.json $HOME/recipe.json
+ENV     NEXT_PUBLIC_VERSION="2.3.1"
+
+ENV     NEXT_PUBLIC_DOMAIN="cloudpub.ru"
+ENV     NEXT_PUBLIC_ONPREM="false"
+ENV     NEXT_PUBLIC_SITE_NAME="CloudPub"
 
 ENV     CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=/usr/bin/arm-linux-gnueabihf-gcc
 ENV     CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABI_LINKER=/usr/bin/arm-linux-gnueabi-gcc
 ENV     CARGO_TARGET_ARMV5TE_UNKNOWN_LINUX_MUSLEABI_LINKER=/usr/bin/arm-linux-gnueabi-gcc
 ENV     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/bin/aarch64-linux-gnu-gcc
 ENV     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/usr/bin/x86_64-w64-mingw32-gcc
+ENV     RUSTFLAGS_X86_64_PC_WINDOWS_GNU="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01"
 ENV     CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/mipsel-linux-gnu-gcc
 
 WORKDIR $HOME
@@ -71,7 +77,8 @@ RUN     cargo chef cook --bin client --profile minimal --target x86_64-unknown-l
 RUN     cargo chef cook --bin client --profile minimal --target arm-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
 RUN     cargo chef cook --bin client --profile minimal --target armv5te-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
 RUN     cargo chef cook --bin client --profile minimal --target aarch64-unknown-linux-musl --no-default-features --recipe-path $HOME/recipe.json
-RUN     cargo chef cook --bin client --profile minimal --target x86_64-pc-windows-gnu --recipe-path $HOME/recipe.json
+RUN     RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01" \
+        cargo chef cook --bin client --profile minimal --target x86_64-pc-windows-gnu --recipe-path $HOME/recipe.json
 # Try to build with nightly for MIPS (little-endian)
 RUN     rustup component add rust-src --toolchain nightly && \
         RUSTFLAGS="-C target-feature=+crt-static -C linker=/usr/bin/mipsel-linux-gnu-gcc" \
@@ -90,6 +97,7 @@ ENV     PATH="$PATH:$HOME/bin"
 
 # Build client for all targets and create artifacts
 RUN     mkdir -p artifacts/win64 && \
+        RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01" \
         cargo build -p client --target x86_64-pc-windows-gnu --profile minimal && \
         cp target/x86_64-pc-windows-gnu/minimal/client.exe artifacts/win64/clo.exe
 

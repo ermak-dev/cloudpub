@@ -2,6 +2,7 @@
 title: Cвой сервер Minecraft за одну минуту
 description: "Как опубликовать сервер Minecraft в интернете с помощью CloudPub"
 slug: minecraft
+tags: ["игры", "minecraft", "tcp"]
 ---
 
 ![Minecraft](/img/minecraft-server.jpg)

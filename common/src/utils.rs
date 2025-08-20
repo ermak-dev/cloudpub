@@ -91,7 +91,6 @@ pub async fn is_udp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
 
 pub async fn is_tcp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
     let tcp_socket = TcpSocket::new_v4()?;
-    tcp_socket.set_reuseaddr(true).unwrap();
     let bind_addr: SocketAddr = format!("{}:{}", bind_addr, port)
         .parse()
         .with_context(|| format!("Failed to parse bind address: {}:{}", bind_addr, port))?;
@@ -120,14 +119,10 @@ pub fn get_platform() -> String {
     let platform = "linux-aarch64".to_string();
     #[cfg(all(target_os = "linux", target_arch = "x86"))]
     let platform = "linux-i686".to_string();
-    #[cfg(all(target_os = "linux", target_arch = "mips"))]
+    #[cfg(all(target_os = "linux", target_arch = "mips", target_endian = "big"))]
     let platform = "linux-mips".to_string();
-    #[cfg(all(target_os = "linux", target_arch = "mips64"))]
-    let platform = "linux-mips64".to_string();
-    #[cfg(all(target_os = "linux", target_arch = "mips32r6"))]
-    let platform = "linux-mips32r6".to_string();
-    #[cfg(all(target_os = "linux", target_arch = "mips64r6"))]
-    let platform = "linux-mips64r6".to_string();
+    #[cfg(all(target_os = "linux", target_arch = "mips", target_endian = "little"))]
+    let platform = "linux-mipsel".to_string();
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     let platform = "windows-x86_64".to_string();
     #[cfg(all(target_os = "windows", target_arch = "x86"))]
@@ -136,24 +131,6 @@ pub fn get_platform() -> String {
     let platform = "macos-x86_64".to_string();
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     let platform = "macos-aarch64".to_string();
-    
-    // Fallback for any other platform
-    #[cfg(not(any(
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "arm"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86"),
-        all(target_os = "linux", target_arch = "mips"),
-        all(target_os = "linux", target_arch = "mips64"),
-        all(target_os = "linux", target_arch = "mips32r6"),
-        all(target_os = "linux", target_arch = "mips64r6"),
-        all(target_os = "windows", target_arch = "x86_64"),
-        all(target_os = "windows", target_arch = "x86"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64")
-    )))]
-    let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    
     platform
 }
 

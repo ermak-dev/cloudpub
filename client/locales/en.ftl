@@ -1,5 +1,3 @@
-server = https://cloudpub.online
-# Error messages
 error-network = Network error, trying again.
 error-process-terminated = Server process was unexpectedly terminated
 error-auth-missing = Authorization token is missing

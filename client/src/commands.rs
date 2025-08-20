@@ -17,6 +17,8 @@ pub enum Commands {
     Set(SetArgs),
     #[clap(about = "Get value from the config")]
     Get(GetArgs),
+    #[clap(about = "Show all config options and their values")]
+    Options,
     #[clap(about = "Run all registered services")]
     Run,
     #[clap(about = "Start publication")]
