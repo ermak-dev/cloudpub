@@ -44,6 +44,7 @@ error-installing-vcpp = Ошибка установки компонентов V
 error-setting-permissions = Ошибка установки прав на исполнение
 error-creating-marker = Ошибка создания файла метки
 error-writing-httpd-conf = Ошибка записи httpd.conf
+error-start-server = Не удалось запустить сервер за 60 секунд. Проверьте логи сервера.
 
 # Service messages
 service-published = Сервис опубликован: {$endpoint}

@@ -3,7 +3,7 @@ sidebar_position: 1
 slug: /
 ---
 
-import { Downloads, getUrl, getFile } from 'src/components/app/downloads';
+import { Downloads, getUrl, getFile } from 'src/components/admin/downloads';
 import CodeBlock from '@theme/CodeBlock';
 
 # Быстрый старт

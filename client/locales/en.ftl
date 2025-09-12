@@ -44,6 +44,7 @@ error-installing-vcpp = Error installing VC++ components
 error-setting-permissions = Error setting execution permissions
 error-creating-marker = Error creating marker file
 error-writing-httpd-conf = Error writing httpd.conf
+error-start-server = Failed to start server within 60 seconds. Please check server logs.
 
 # Service messages
 service-published = Service published: {$endpoint}

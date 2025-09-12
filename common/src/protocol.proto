@@ -33,6 +33,7 @@ enum ErrorKind {
   PERMISSION_DENIED = 3;
   PUBLISH_FAILED = 4;
   EXECUTE_FAILED = 5;
+  SERVER_ERROR = 6;
 }
 
 enum FilterAction {
@@ -168,6 +169,7 @@ message UpgradeInfo {
 message ErrorInfo {
   ErrorKind kind = 1;
   string message = 2;
+  string guid = 3;
 }
 
 message ProgressInfo {
@@ -175,6 +177,7 @@ message ProgressInfo {
     string template = 2;
     uint32 current = 3;
     uint32 total = 4;
+    string guid = 5;
 }
 
 message AgentAck {
@@ -191,6 +194,7 @@ message StartForwardUdp {
 }
 
 message Break {
+    string guid = 1;
 }
 
 message Stop {
@@ -257,6 +261,13 @@ message EndpointStopAll {
     bool set_offline = 1; // If true, set offline default status
 }
 
+message EndpointStatus {
+    string guid = 1;
+    string status = 2;
+    string default_status = 3;
+    string error = 4;
+}
+
 // Message wrapper
 message Message {
   oneof message {
@@ -265,11 +276,11 @@ message Message {
     ClientEndpoint endpoint_start = 3;
     ServerEndpoint endpoint_ack = 4;
     EndpointStop endpoint_stop = 5;
-    DataChannelInfo data_channel_hello = 6;
+    DataChannelInfo data_channel_hello = 6; // Deprecated
     ServerEndpoint create_data_channel = 7;
     HeartBeat heart_beat = 8;
-    StartForwardTcp start_forward_tcp = 9;
-    StartForwardUdp start_forward_udp = 10;
+    StartForwardTcp start_forward_tcp = 9; // Deprecated
+    StartForwardUdp start_forward_udp = 10; // Deprecated
     ErrorInfo error = 11;
     UpgradeInfo upgrade_available = 12;
     Redirect redirect = 13;
@@ -293,5 +304,7 @@ message Message {
     DataChannelAck data_channel_ack = 31;
     EndpointStopAll endpoint_stop_all = 32;
     EndpointStart endpoint_guid_start = 33;
+    ServerEndpoint endpoint_status = 34;
+    ServerEndpoint endpoint_status_ack = 35;
   }
 }

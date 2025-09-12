@@ -2,6 +2,7 @@ pub mod config;
 pub mod constants;
 pub mod data;
 pub mod fair_channel;
+pub mod lease;
 pub mod logging;
 pub mod protocol;
 pub mod routing;

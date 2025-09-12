@@ -2,7 +2,7 @@ use crate::config::{TcpConfig, TransportConfig};
 
 use super::{AddrMaybeCached, ProtobufStream, SocketOpts, Transport};
 use crate::utils::host_port_pair;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
 use async_trait::async_trait;
 use socket2::{SockRef, TcpKeepalive};
@@ -12,11 +12,11 @@ use std::str::FromStr;
 use std::time::Duration;
 pub use tokio_unix_tcp::{Listener, NamedSocketAddr, SocketAddr, Stream};
 type RawTcpStream = Stream;
-use crate::protocol::v2::message::Message as ProtocolMessage;
-use crate::protocol::v2::{read_message, write_message};
+use crate::protocol::message::Message as ProtocolMessage;
+use crate::protocol::{read_message, write_message};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tracing::trace;
 use url::Url;
 
@@ -99,6 +99,13 @@ impl ProtobufStream for TcpStream {
 
     async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
         write_message(&mut self.inner, msg).await
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        self.inner
+            .shutdown()
+            .await
+            .context("Failed to shutdown stream")
     }
 }
 

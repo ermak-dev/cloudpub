@@ -163,7 +163,7 @@ docker-compose pull
 docker-compose up -d
 ```
 
-## Версия для ARM процессоров
+## Версия для ARM процессоров {#arm}
 
 Для ARM процессоров доступен образ `cloudpub/cloudpub:latest-arm64`
 

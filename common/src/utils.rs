@@ -8,7 +8,7 @@ use tokio::net::{lookup_host, TcpListener, TcpSocket, ToSocketAddrs, UdpSocket};
 use tokio::sync::watch;
 use tracing::{debug, trace};
 
-use crate::protocol::v2::message::Message as ProtocolMessage;
+use crate::protocol::message::Message as ProtocolMessage;
 use futures::future::{BoxFuture, FutureExt};
 
 pub fn box_future<F, T>(future: F) -> BoxFuture<'static, T>
@@ -90,14 +90,22 @@ pub async fn is_udp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
 }
 
 pub async fn is_tcp_port_available(bind_addr: &str, port: u16) -> Result<bool> {
-    let tcp_socket = TcpSocket::new_v4()?;
-    let bind_addr: SocketAddr = format!("{}:{}", bind_addr, port)
+    // Parse as IpAddr to correctly support IPv4/IPv6 and avoid "[addr]:port" formatting issues
+    let ip: std::net::IpAddr = bind_addr
         .parse()
-        .with_context(|| format!("Failed to parse bind address: {}:{}", bind_addr, port))?;
-    debug!("Check port: {}", bind_addr);
-    match tcp_socket.bind(bind_addr) {
+        .with_context(|| format!("Invalid bind address: {}", bind_addr))?;
+    let addr = SocketAddr::new(ip, port);
+
+    let tcp_socket = match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?,
+    };
+
+    debug!("Check port: {}", addr);
+    match tcp_socket.bind(addr) {
         Ok(_) => Ok(true),
         Err(ref e) if e.kind() == io::ErrorKind::AddrInUse => Ok(false),
+        Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(false),
         Err(e) => Err(e).context("Failed to check TCP port")?,
     }
 }
@@ -146,19 +154,19 @@ pub fn split_host_port(host_and_port: &str, default_port: u16) -> (String, u16) 
     (host, port)
 }
 
-pub fn socket_addr_to_proto(addr: &SocketAddr) -> crate::protocol::v2::SocketAddr {
+pub fn socket_addr_to_proto(addr: &SocketAddr) -> crate::protocol::SocketAddr {
     match addr {
-        SocketAddr::V4(addr_v4) => crate::protocol::v2::SocketAddr {
-            addr: Some(crate::protocol::v2::socket_addr::Addr::V4(
-                crate::protocol::v2::SocketAddrV4 {
+        SocketAddr::V4(addr_v4) => crate::protocol::SocketAddr {
+            addr: Some(crate::protocol::socket_addr::Addr::V4(
+                crate::protocol::SocketAddrV4 {
                     ip: u32::from(*addr_v4.ip()),
                     port: addr_v4.port() as u32,
                 },
             )),
         },
-        SocketAddr::V6(addr_v6) => crate::protocol::v2::SocketAddr {
-            addr: Some(crate::protocol::v2::socket_addr::Addr::V6(
-                crate::protocol::v2::SocketAddrV6 {
+        SocketAddr::V6(addr_v6) => crate::protocol::SocketAddr {
+            addr: Some(crate::protocol::socket_addr::Addr::V6(
+                crate::protocol::SocketAddrV6 {
                     ip: addr_v6.ip().octets().to_vec(),
                     port: addr_v6.port() as u32,
                     flowinfo: addr_v6.flowinfo(),
@@ -169,12 +177,13 @@ pub fn socket_addr_to_proto(addr: &SocketAddr) -> crate::protocol::v2::SocketAdd
     }
 }
 
-pub fn proto_to_socket_addr(proto_addr: &crate::protocol::v2::SocketAddr) -> Result<SocketAddr> {
+pub fn proto_to_socket_addr(proto_addr: &crate::protocol::SocketAddr) -> Result<SocketAddr> {
     match &proto_addr.addr {
-        Some(crate::protocol::v2::socket_addr::Addr::V4(v4)) => Ok(SocketAddr::V4(
-            SocketAddrV4::new(Ipv4Addr::from(v4.ip), v4.port as u16),
-        )),
-        Some(crate::protocol::v2::socket_addr::Addr::V6(v6)) => {
+        Some(crate::protocol::socket_addr::Addr::V4(v4)) => Ok(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::from(v4.ip),
+            v4.port as u16,
+        ))),
+        Some(crate::protocol::socket_addr::Addr::V6(v6)) => {
             if v6.ip.len() == 16 {
                 let mut ip_bytes = [0u8; 16];
                 ip_bytes.copy_from_slice(&v6.ip);
@@ -238,6 +247,9 @@ pub fn trace_message(label: &str, msg: &ProtocolMessage) {
                 data.channel_id,
                 data.error
             );
+        }
+        ProtocolMessage::Progress(data) => {
+            trace!("{}: Progress {:?}", label, data);
         }
         ProtocolMessage::HeartBeat(_) => {
             trace!("{}: HeartBeat", label);

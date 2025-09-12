@@ -8,11 +8,12 @@ use std::fs;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use x509_parser::prelude::*;
 
-use crate::protocol::v2::message::Message as ProtocolMessage;
-use crate::protocol::v2::{read_message, write_message};
+use crate::protocol::message::Message as ProtocolMessage;
+use crate::protocol::{read_message, write_message};
 use crate::transport::ProtobufStream;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -51,7 +52,7 @@ fn process_certificate<'a>(
     // Parse the certificate to get more details
     if let Ok((_, parsed_cert)) = X509Certificate::from_der(&cert_der) {
         if let Some(algorithm) = algorithm_name(&parsed_cert.signature_algorithm.algorithm) {
-            tracing::debug!(
+            tracing::trace!(
                 "Adding {} certificate - Subject: {}, Issuer: {}, Algorithm: {}",
                 cert_type,
                 parsed_cert.subject(),
@@ -60,7 +61,7 @@ fn process_certificate<'a>(
             );
             Some(cert_der)
         } else {
-            tracing::error!(
+            tracing::trace!(
                 "Skipping {} certificate with unknown algorithm - Subject: {}, Issuer: {}, OID: {}",
                 cert_type,
                 parsed_cert.subject(),
@@ -114,7 +115,7 @@ fn load_server_config(config: &TlsConfig) -> Result<Option<ServerConfig>> {
     }
 }
 
-pub fn load_roots(config: &TlsConfig) -> Result<Vec<CertificateDer>> {
+pub fn load_roots(config: &TlsConfig) -> Result<Vec<CertificateDer<'_>>> {
     let mut root_certs = Vec::new();
 
     if let Some(path) = config.trusted_root.as_ref() {
@@ -329,5 +330,13 @@ impl ProtobufStream for TlsStream<Stream> {
 
     async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
         write_message(self, msg).await
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        self.get_mut()
+            .0
+            .shutdown()
+            .await
+            .context("Failed to close TLS stream")
     }
 }

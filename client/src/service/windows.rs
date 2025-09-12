@@ -273,7 +273,7 @@ pub async fn run_app(stop_tx: broadcast::Sender<()>) {
     });
 
     // Run the main loop
-    if let Err(err) = main_loop(cli, config, command_tx, command_rx, None, None).await {
+    if let Err(err) = main_loop(cli, config, command_tx, command_rx).await {
         tracing::error!("Error running main loop: {}", err);
     }
 

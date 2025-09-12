@@ -70,7 +70,7 @@ lazy_static! {
             Platform::X64,
             EnvConfig {
                 home_1c: PathBuf::from("/opt/1C"),
-                httpd: "httpd-2.4.62-linux.zip".to_string(),
+                httpd: "httpd-2.4.63-linux.zip".to_string(),
                 httpd_dir: "httpd-x64".to_string(),
             },
         );

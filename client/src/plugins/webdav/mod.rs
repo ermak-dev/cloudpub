@@ -38,6 +38,8 @@ impl Plugin for WebdavPlugin {
         _opts: &ClientOpts,
         result_tx: &mpsc::Sender<Message>,
     ) -> Result<SubProcess> {
+        // Well, there is actually local_addr for that, but to backward compatibility
+        // we must use local_addr for the publish directory.
         let publish_dir = endpoint.client.as_ref().unwrap().local_addr.clone();
         let env = Default::default();
 

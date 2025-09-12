@@ -15,12 +15,13 @@ use common::protocol::{
 use common::{LONG_VERSION, VERSION};
 use dirs::cache_dir;
 use futures::future::FutureExt;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
 const CONFIG_FILE: &str = "client.toml";
@@ -145,7 +146,7 @@ pub async fn cli_main(cli: Cli, config: Arc<RwLock<ClientConfig>>) -> Result<()>
     .context("Error setting Ctrl-C handler")?;
 
     let (command_tx, command_rx) = mpsc::channel(1024);
-    main_loop(cli, config, command_tx, command_rx, None, None).await
+    main_loop(cli, config, command_tx, command_rx).await
 }
 
 fn make_spinner(msg: String) -> ProgressBar {
@@ -167,24 +168,14 @@ pub async fn main_loop(
     config: Arc<RwLock<ClientConfig>>,
     command_tx: mpsc::Sender<Message>,
     command_rx: mpsc::Receiver<Message>,
-    stdout: Option<broadcast::Sender<String>>,
-    stderr: Option<broadcast::Sender<String>>,
 ) -> Result<()> {
     let mut opts = ClientOpts::default();
     let write_stdout = |res: String| {
-        if let Some(tx) = stdout.as_ref() {
-            tx.send(res).ok();
-        } else {
-            println!("{}", res);
-        }
+        println!("{}", res);
     };
 
     let write_stderr = |res: String| {
-        if let Some(tx) = stderr.as_ref() {
-            tx.send(res).ok();
-        } else {
-            eprintln!("{}", res);
-        }
+        eprintln!("{}", res);
     };
 
     let (result_tx, mut result_rx) = mpsc::channel(1024);
@@ -224,12 +215,8 @@ pub async fn main_loop(
                 Some(email) => email.clone(),
                 None => {
                     // Prompt the user for email
-                    if let Some(tx) = stdout.as_ref() {
-                        tx.send(crate::t!("enter-email")).ok();
-                    } else {
-                        print!("{}", crate::t!("enter-email"));
-                        std::io::stdout().flush().ok();
-                    }
+                    print!("{}", crate::t!("enter-email"));
+                    std::io::stdout().flush().ok();
                     let mut email = String::new();
                     std::io::stdin().read_line(&mut email)?;
                     email.trim().to_string()
@@ -244,12 +231,8 @@ pub async fn main_loop(
                         pwd
                     } else {
                         // If not in environment, prompt the user
-                        if let Some(tx) = stdout.as_ref() {
-                            tx.send(crate::t!("enter-password")).ok();
-                        } else {
-                            print!("{}", crate::t!("enter-password"));
-                            std::io::stdout().flush().ok();
-                        }
+                        print!("{}", crate::t!("enter-password"));
+                        std::io::stdout().flush().ok();
                         rpassword::read_password().unwrap_or_default()
                     }
                 }
@@ -311,7 +294,8 @@ pub async fn main_loop(
     });
 
     let mut current_spinner = None;
-    let mut progress_bar = None;
+    let multi_progress = MultiProgress::new();
+    let mut progress_bars: HashMap<String, ProgressBar> = HashMap::new();
 
     loop {
         match result_rx
@@ -475,20 +459,29 @@ pub async fn main_loop(
             },
 
             Message::Progress(info) => {
+                let progress_guid = if info.guid.is_empty() {
+                    "default"
+                } else {
+                    &info.guid
+                };
+
                 if info.current == 0 {
-                    let bar = ProgressBar::new(info.total as u64);
-                    bar.set_message(info.message);
+                    // Create a new progress bar for this GUID
+                    let bar = multi_progress.add(ProgressBar::new(info.total as u64));
+                    bar.set_message(info.message.clone());
                     bar.set_style(ProgressStyle::default_bar().template(&info.template)?);
-                    progress_bar = Some(bar)
+                    progress_bars.insert(progress_guid.to_string(), bar);
                 } else if info.current >= info.total {
-                    if let Some(progress_bar) = progress_bar.take() {
+                    // Progress completed, remove and finish the progress bar
+                    if let Some(progress_bar) = progress_bars.remove(progress_guid) {
                         progress_bar.finish_and_clear();
                     }
-                } else {
-                    progress_bar
-                        .as_ref()
-                        .unwrap()
-                        .set_position(info.current as u64);
+                } else if let Some(bar) = progress_bars.get(progress_guid) {
+                    // Update existing progress bar
+                    bar.set_position(info.current as u64);
+                    if !info.message.is_empty() {
+                        bar.set_message(info.message.clone());
+                    }
                 }
             }
 

@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -28,7 +29,11 @@ pub const DOWNLOAD_SUBDIR: &str = "download";
 
 pub struct SubProcess {
     shutdown_tx: mpsc::Sender<Message>,
+    command: PathBuf,
+    args: Vec<String>,
     pub port: u16,
+    canceled: Arc<AtomicBool>,
+    pub result: Arc<RwLock<Result<()>>>,
 }
 
 impl SubProcess {
@@ -40,38 +45,52 @@ impl SubProcess {
         result_tx: mpsc::Sender<Message>,
         port: u16,
     ) -> Self {
+        let canceled = Arc::new(AtomicBool::new(false));
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+        let command2 = command.clone();
+        let args2 = args.clone();
+        let canceled2 = canceled.clone();
+        let result = Arc::new(RwLock::new(Ok(())));
+        let result_clone = result.clone();
         tokio::spawn(async move {
-            if let Err(err) = execute(command, args, chdir, envs, None, &mut shutdown_rx).await {
-                error!("Failed to execute command: {:?}", err);
-                result_tx
-                    .send(Message::Error(ErrorInfo {
-                        kind: ErrorKind::Fatal.into(),
-                        message: err.to_string(),
-                    }))
-                    .await
-                    .ok();
-            } else {
-                result_tx
-                    .send(Message::Error(ErrorInfo {
-                        kind: ErrorKind::Fatal.into(),
-                        message: crate::t!("error-process-terminated"),
-                    }))
-                    .await
-                    .ok();
+            if let Err(err) = execute(command2, args2, chdir, envs, None, &mut shutdown_rx).await {
+                if !canceled2.load(Ordering::Relaxed) {
+                    error!("Failed to execute command: {:?}", err);
+                    result_tx
+                        .send(Message::Error(ErrorInfo {
+                            kind: ErrorKind::ExecuteFailed.into(),
+                            message: format!("Ошибка запуска {}", err),
+                            guid: String::new(),
+                        }))
+                        .await
+                        .ok();
+                }
+                *result_clone.write() = Err(err);
             }
         });
-        Self { shutdown_tx, port }
+        Self {
+            shutdown_tx,
+            port,
+            command,
+            args,
+            canceled,
+            result,
+        }
     }
 
     pub fn stop(&mut self) {
-        self.shutdown_tx.try_send(Message::Break(Break {})).ok();
+        self.canceled.store(true, Ordering::Relaxed);
+        self.shutdown_tx
+            .try_send(Message::Break(Break {
+                ..Default::default()
+            }))
+            .ok();
     }
 }
 
 impl Drop for SubProcess {
     fn drop(&mut self) {
-        info!("Drop subprocess");
+        info!("Drop subprocess: {:?} {:?}", self.command, self.args);
         self.stop();
     }
 }
@@ -88,6 +107,7 @@ pub async fn send_progress(
         template: template.to_string(),
         total: total as u32,
         current: current as u32,
+        ..Default::default()
     };
     progress_tx.send(Message::Progress(progress)).await.ok();
 }
@@ -100,11 +120,8 @@ pub async fn execute(
     progress: Option<(String, mpsc::Sender<Message>, u64)>,
     shutdown_rx: &mut mpsc::Receiver<Message>,
 ) -> Result<()> {
-    info!(
-        "Executing command: {} {}",
-        command.to_str().unwrap(),
-        args.join(" ")
-    );
+    let argv = format!("{} {}", command.to_str().unwrap(), args.join(" "));
+    info!("Executing command: {}", argv);
 
     info!("Environment: {:?}", envs);
 
@@ -204,17 +221,17 @@ pub async fn execute(
                 if let Some((message, tx, total)) = progress.as_ref() {
                     send_progress(message, &template, *total, *total, tx).await;
                 }
-                bail!("Command failed: {:?}", status);
+                bail!("{}: exit code {}", command.file_name().unwrap().to_string_lossy(), status.code().unwrap_or(-1));
             }
         }
 
         cmd = shutdown_rx.recv() => match cmd {
             Some(Message::Stop(_)) | Some(Message::Break(_)) => {
-                info!("Received break command, killing child process");
+                info!("Received break command, killing child process: {}", argv);
                 child.kill().await.ok();
             }
             None => {
-                info!("Command channel closed, killing child process");
+                info!("Command channel closed, killing child process: {}", argv);
                 child.kill().await.ok();
             }
             _ => {}
@@ -250,6 +267,7 @@ pub async fn unzip(
         template,
         total: archive.len() as u32,
         current: 0,
+        ..Default::default()
     };
 
     result_tx
@@ -377,6 +395,7 @@ pub async fn download(
         template,
         total: total_size as u32,
         current: 0,
+        ..Default::default()
     };
 
     result_tx

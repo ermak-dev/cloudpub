@@ -1,0 +1,103 @@
+.queue-animation-container {
+  margin: 30px 0;
+  padding: 20px;
+  background-color: #f5f5f5;
+  border-radius: 8px;
+}
+
+.queue-container {
+  display: flex;
+  align-items: stretch;
+  height: 200px;
+  margin-bottom: 10px;
+}
+
+.input-area, .queue-area, .output-area {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 10px;
+}
+
+.input-area {
+  width: 100px;
+  background-color: #e0e0e0;
+  border-radius: 8px 0 0 8px;
+  justify-content: space-around;
+}
+
+.queue-area {
+  flex-grow: 1;
+  background-color: #f0f0f0;
+  justify-content: space-around;
+}
+
+.output-area {
+  width: 80px;
+  background-color: #e0e0e0;
+  border-radius: 0 8px 8px 0;
+  justify-content: center;
+  align-items: center;
+}
+
+.input-lane, .queue-lane {
+  height: 40px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.fifo-lane {
+  height: 120px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+
+.lane-label, .output-label {
+  position: absolute;
+  font-size: 12px;
+  color: #666;
+  left: 5px;
+  top: -15px;
+}
+
+.output-label {
+  top: -20px;
+}
+
+.packet {
+  width: 30px;
+  height: 30px;
+  border-radius: 5px;
+  margin: 2px;
+  transition: all 0.5s ease;
+}
+
+.packet-type-1 {
+  background-color: #ff5252;
+}
+
+.packet-type-2 {
+  background-color: #4caf50;
+}
+
+.packet-type-3 {
+  background-color: #2196f3;
+}
+
+.queue-explanation {
+  text-align: center;
+  font-size: 14px;
+  color: #666;
+  margin-top: 5px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.packet {
+  animation: fadeIn 0.3s ease;
+}

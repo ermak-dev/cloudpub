@@ -9,12 +9,13 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::error;
 
-use crate::protocol::v2::message::Message as ProtocolMessage;
+use crate::protocol::message::Message as ProtocolMessage;
 
 #[async_trait]
 pub trait ProtobufStream {
     async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>>;
     async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()>;
+    async fn close(&mut self) -> anyhow::Result<()>;
 }
 
 #[cfg(unix)]

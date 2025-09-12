@@ -1,4 +1,4 @@
-FROM            bitnami/minideb:latest-arm64
+FROM            bitnami/minideb:bookworm-arm64
 
 COPY            artifacts/linux/aarch64/clo /clo
 COPY            client/entrypoint.sh /

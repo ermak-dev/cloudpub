@@ -1,4 +1,4 @@
-FROM            bitnami/minideb
+FROM            bitnami/minideb:bookworm
 
 COPY            artifacts/linux/x86_64/clo /clo
 COPY            client/entrypoint.sh /

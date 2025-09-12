@@ -7,7 +7,7 @@ tags: ["интеграции", "1С"]
 
 ![1С](/img/1c-server.png#center)
 
-import { Downloads, getUrl, getFile } from 'src/components/app/downloads';
+import { Downloads, getUrl, getFile } from 'src/components/admin/downloads';
 
 CloudPub - это инновационное облачное решение, которое позволяет быстро и легко разместить вашу базу данных 1С в интернете. Наш сервис предоставляет доступ к базе из любого места, отличается безопасностью и удобством в работе. CloudPub оценят пользователи, которые не хотят вдаваться в тонкости настроек — все происходит автоматически.
 

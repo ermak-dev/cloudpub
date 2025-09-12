@@ -17,8 +17,7 @@ use futures_core::stream::Stream as AsyncStream;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::utils::trace_message;
-use parking_lot::RwLock;
-use std::collections::HashMap;
+use dashmap::DashMap;
 #[cfg(unix)]
 use std::os::fd::RawFd;
 use std::sync::Arc;
@@ -35,14 +34,14 @@ use futures_util::stream::StreamExt;
 #[cfg(feature = "rustls")]
 use super::tls::{get_stream, TlsStream, TlsTransport};
 
-use crate::protocol::v2::message::Message as ProtocolMessage;
-use crate::protocol::v2::ProstMessage;
+use crate::protocol::message::Message as ProtocolMessage;
+use crate::protocol::ProstMessage;
 
 #[derive(Debug)]
 enum TransportStream {
     Insecure(Stream),
     #[cfg(feature = "rustls")]
-    Secure(TlsStream<Stream>),
+    Secure(Box<TlsStream<Stream>>),
 }
 
 impl TransportStream {
@@ -50,7 +49,7 @@ impl TransportStream {
         match self {
             TransportStream::Insecure(s) => s,
             #[cfg(feature = "rustls")]
-            TransportStream::Secure(s) => get_stream(s),
+            TransportStream::Secure(s) => get_stream(s.as_ref()),
         }
     }
 }
@@ -64,7 +63,7 @@ impl AsyncRead for TransportStream {
         match self.get_mut() {
             TransportStream::Insecure(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(feature = "rustls")]
-            TransportStream::Secure(s) => Pin::new(s).poll_read(cx, buf),
+            TransportStream::Secure(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
         }
     }
 }
@@ -78,7 +77,7 @@ impl AsyncWrite for TransportStream {
         match self.get_mut() {
             TransportStream::Insecure(s) => Pin::new(s).poll_write(cx, buf),
             #[cfg(feature = "rustls")]
-            TransportStream::Secure(s) => Pin::new(s).poll_write(cx, buf),
+            TransportStream::Secure(s) => Pin::new(s.as_mut()).poll_write(cx, buf),
         }
     }
 
@@ -86,7 +85,7 @@ impl AsyncWrite for TransportStream {
         match self.get_mut() {
             TransportStream::Insecure(s) => Pin::new(s).poll_flush(cx),
             #[cfg(feature = "rustls")]
-            TransportStream::Secure(s) => Pin::new(s).poll_flush(cx),
+            TransportStream::Secure(s) => Pin::new(s.as_mut()).poll_flush(cx),
         }
     }
 
@@ -97,7 +96,7 @@ impl AsyncWrite for TransportStream {
         match self.get_mut() {
             TransportStream::Insecure(s) => Pin::new(s).poll_shutdown(cx),
             #[cfg(feature = "rustls")]
-            TransportStream::Secure(s) => Pin::new(s).poll_shutdown(cx),
+            TransportStream::Secure(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
         }
     }
 }
@@ -112,7 +111,7 @@ impl ProtobufStream for StreamWrapper {
     async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
         match self.inner.next().await {
             Some(Ok(Message::Binary(b))) => {
-                let msg = crate::protocol::v2::Message::decode(b.as_ref())
+                let msg = crate::protocol::Message::decode(b.as_ref())
                     .context("Failed to decode protobuf message")?;
                 let msg = msg
                     .message
@@ -151,11 +150,11 @@ impl ProtobufStream for StreamWrapper {
 
     async fn send_message(
         &mut self,
-        msg: &crate::protocol::v2::message::Message,
+        msg: &crate::protocol::message::Message,
     ) -> anyhow::Result<()> {
         trace_message("Send", msg);
         let mut buf = BytesMut::new();
-        let msg = crate::protocol::v2::Message {
+        let msg = crate::protocol::Message {
             message: Some(msg.clone()),
         };
         msg.encode(&mut buf)
@@ -166,6 +165,14 @@ impl ProtobufStream for StreamWrapper {
             .context("Failed to send WebSocket message")?;
         Ok(())
     }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        debug!("Closing WebSocket connection");
+        self.inner
+            .close(None)
+            .await
+            .context("Failed to close WebSocket stream")
+    }
 }
 
 impl AsyncStream for StreamWrapper {
@@ -175,9 +182,7 @@ impl AsyncStream for StreamWrapper {
         match Pin::new(&mut self.get_mut().inner).poll_next(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Err(err))) => {
-                Poll::Ready(Some(Err(Error::new(ErrorKind::Other, err))))
-            }
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(Error::other(err)))),
             Poll::Ready(Some(Ok(res))) => {
                 if let Message::Binary(b) = res {
                     Poll::Ready(Some(Ok(b)))
@@ -228,28 +233,26 @@ impl AsyncWrite for WebsocketStream {
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         let sw = self.get_mut().inner.get_mut();
-        ready!(Pin::new(&mut sw.inner)
-            .poll_ready(cx)
-            .map_err(|err| Error::new(ErrorKind::Other, err)))?;
+        ready!(Pin::new(&mut sw.inner).poll_ready(cx).map_err(Error::other))?;
 
         let bbuf = BytesMut::from(buf);
 
         match Pin::new(&mut sw.inner).start_send(Message::Binary(bbuf.into())) {
             Ok(()) => Poll::Ready(Ok(buf.len())),
-            Err(e) => Poll::Ready(Err(Error::new(ErrorKind::Other, e))),
+            Err(e) => Poll::Ready(Err(Error::other(e))),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         Pin::new(&mut self.get_mut().inner.get_mut().inner)
             .poll_flush(cx)
-            .map_err(|err| Error::new(ErrorKind::Other, err))
+            .map_err(Error::other)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         Pin::new(&mut self.get_mut().inner.get_mut().inner)
             .poll_close(cx)
-            .map_err(|err| Error::new(ErrorKind::Other, err))
+            .map_err(Error::other)
     }
 }
 
@@ -261,6 +264,11 @@ impl ProtobufStream for WebsocketStream {
 
     async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
         self.inner.get_mut().send_message(msg).await
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        debug!("Closing WebSocket stream");
+        self.inner.get_mut().close().await
     }
 }
 
@@ -275,7 +283,7 @@ enum SubTransport {
 pub struct WebsocketTransport {
     sub: SubTransport,
     conf: WebSocketConfig,
-    headers: Arc<RwLock<HashMap<String, String>>>,
+    headers: Arc<DashMap<String, String>>,
 }
 
 #[async_trait]
@@ -299,7 +307,7 @@ impl Transport for WebsocketTransport {
             true => unreachable!("TLS support not enabled"),
             false => SubTransport::Insecure(TcpTransport::new(config)?),
         };
-        let headers = Default::default();
+        let headers = Arc::new(DashMap::new());
         Ok(WebsocketTransport { sub, conf, headers })
     }
 
@@ -334,13 +342,12 @@ impl Transport for WebsocketTransport {
                 TransportStream::Insecure(t.handshake(conn).await?.into_stream())
             }
             #[cfg(feature = "rustls")]
-            SubTransport::Secure(t) => TransportStream::Secure(t.handshake(conn).await?),
+            SubTransport::Secure(t) => TransportStream::Secure(Box::new(t.handshake(conn).await?)),
         };
 
         let headers = self.headers.clone();
 
         let callback = move |req: &Request, res: Response| {
-            let mut headers = headers.write();
             for ref header in req.headers() {
                 trace!("WS headers: {:?}", header);
                 headers.insert(
@@ -366,7 +373,7 @@ impl Transport for WebsocketTransport {
                 TransportStream::Insecure(t.connect(addr).await?.into_stream())
             }
             #[cfg(feature = "rustls")]
-            SubTransport::Secure(t) => TransportStream::Secure(t.connect(addr).await?),
+            SubTransport::Secure(t) => TransportStream::Secure(Box::new(t.connect(addr).await?)),
         };
         debug!("Connecting to {}", u);
         let (wsstream, _) = client_async_with_config(
@@ -388,6 +395,6 @@ impl Transport for WebsocketTransport {
     }
 
     fn get_header(&self, name: &str) -> Option<String> {
-        self.headers.read().get(&name.to_lowercase()).cloned()
+        self.headers.get(&name.to_lowercase()).map(|v| v.clone())
     }
 }

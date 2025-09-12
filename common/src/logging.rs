@@ -24,7 +24,7 @@ pub fn init_log(
     let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
 
     let trace_cfg = format!(
-        "{},hyper=error,tokio_postgres=info,pingora_core=info,pingora_proxy=off,tungstenite=info,{}",
+        "{},hyper=error,tokio_postgres=info,pingora_core=info,pingora_proxy=off,pingora_pool=error,tungstenite=info,{}",
         level,
         std::env::var("RUST_LOG").unwrap_or_default()
     );
