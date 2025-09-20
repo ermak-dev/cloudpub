@@ -1,0 +1,23 @@
+[package]
+name = "cloudpub-python-sdk"
+version = "2.4.3"
+edition = "2021"
+authors = ["CloudPub <support@cloudpub.ru>"]
+license = "Apache-2.0"
+description = "Python bindings for CloudPub SDK"
+homepage = "https://github.com/ermak-dev/cloudpub"
+repository = "https://github.com/ermak-dev/cloudpub"
+
+[lib]
+name = "cloudpub_python_sdk"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0"
+pyo3 = { version = "0.22", features = ["extension-module", "auto-initialize"] }
+tokio = { version = "1.46", features = ["full"] }
+parking_lot = "0.12"
+
+# Internal dependencies
+cloudpub-sdk = { version = "2.4.3", path = "../rust" }
+cloudpub-common = { version = "2.4.3", path = "../../common" }

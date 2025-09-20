@@ -1,0 +1,27 @@
+[package]
+name = "cloudpub-sdk"
+version = "2.4.3"
+edition = "2021"
+authors = ["CloudPub <support@cloudpub.ru>"]
+license = "Apache-2.0"
+description = "Rust SDK for CloudPub - A secure tunnel and service publishing platform"
+homepage = "https://github.com/ermak-dev/cloudpub"
+repository = "https://github.com/ermak-dev/cloudpub"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0"
+tokio = { version = "1.46", features = ["full"] }
+parking_lot = "0.12"
+dirs = "5.0"
+futures = "0.3"
+tracing = "0.1"
+fdlimit = "0.3"
+
+# Internal dependencies
+cloudpub-client = { version = "2.4.3", path = "../../client" }
+cloudpub-common = { version = "2.4.3", path = "../../common" }
+
+[[example]]
+name = "example"
+path = "examples/example.rs"

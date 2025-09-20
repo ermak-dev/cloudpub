@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use client::base::{cli_main, init, Cli};
+use cloudpub_client::base::{cli_main, init, Cli};
 use tracing::error;
 
 pub fn main() -> Result<()> {
@@ -9,7 +9,7 @@ pub fn main() -> Result<()> {
     {
         use std::env;
         if env::args().any(|arg| arg == "--run-as-service") {
-            return client::service::run_as_service();
+            return cloudpub_client::service::run_as_service();
         }
     }
 

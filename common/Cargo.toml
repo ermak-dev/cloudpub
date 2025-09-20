@@ -1,14 +1,17 @@
 [package]
-name = "common"
-version = "2.4.2"
+name = "cloudpub-common"
+version = "2.4.3"
 edition = "2021"
-authors = ["Anton Ermak <anton@ermak.dev>"]
+authors = ["CloudPub <support@cloudpub.ru>"]
+license = "Apache-2.0"
 description = "Common code for the client, server, and GUI"
-include = ["src/**/*", "build.rs"]
+homepage = "https://github.com/ermak-dev/cloudpub"
+repository = "https://github.com/ermak-dev/cloudpub"
+include = ["src/**/*", "build.rs", "roots/*"]
 
 [features]
 default = []
-english = []
+serde = []
 
 # TLS support
 rustls = [
@@ -21,6 +24,7 @@ rustls = [
   "p12",
   "x509-parser",
 ]
+
 
 [build-dependencies]
 prost-build = "0.14.1"
@@ -56,7 +60,6 @@ tracing-subscriber.workspace = true
 
 tracing-appender = "0.2.3"
 tracing-log = "0.2.0"
-tokio-unix-tcp = { git = "https://github.com/ermakus/tokio-unix-tcp.git", branch = "master" }
 bincode = { version = "2.0.1", features = ["serde"] }
 prost = "0.14.1"
 log-panics = { version = "2.1.0", features = ["with-backtrace"] }

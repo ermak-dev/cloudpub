@@ -1,12 +1,12 @@
 use anyhow::{bail, Context, Result};
-use common::constants::DEFAULT_HEARTBEAT_TIMEOUT_SECS;
-use common::DOMAIN;
+use cloudpub_common::constants::DEFAULT_HEARTBEAT_TIMEOUT_SECS;
+use cloudpub_common::{DOMAIN, PORT};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
 
 use crate::options::ConfigOption;
-pub use common::config::{MaskedString, TransportConfig};
+pub use cloudpub_common::config::{MaskedString, TransportConfig};
 use lazy_static::lazy_static;
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 use std::collections::HashMap;
@@ -243,7 +243,7 @@ impl Default for ClientConfig {
             agent_id: Uuid::new_v4().to_string(),
             hwid: None,
             config_path: PathBuf::new(),
-            server: format!("https://{}", DOMAIN).parse().unwrap(),
+            server: format!("https://{}:{}", DOMAIN, PORT).parse().unwrap(),
             token: None,
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT_SECS,
             one_c_home: None,

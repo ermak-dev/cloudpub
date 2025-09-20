@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "cloudpub_python_sdk"
+version = "2.4.3"
+description = "Python bindings for CloudPub client"
+requires-python = ">=3.8"
+classifiers = [
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "Operating System :: OS Independent",
+  "Development Status :: 4 - Beta",
+]
+
+[tool.maturin]
+module-name = "cloudpub_python_sdk"
+python-source = "."

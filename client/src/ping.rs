@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use common::protocol::message::Message;
-use common::protocol::{ClientEndpoint, ServerEndpoint};
-use common::utils::find_free_tcp_port;
+use cloudpub_common::protocol::message::Message;
+use cloudpub_common::protocol::{ClientEndpoint, ServerEndpoint};
+use cloudpub_common::utils::find_free_tcp_port;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -25,20 +25,20 @@ pub async fn start(port: u16) -> Result<mpsc::Sender<()>> {
 
     // Spawn TCP ponger in a non-blocking task
     tokio::spawn(async move {
-        info!("Starting TCP ponger on {}", tcp_addr);
+        debug!("Starting TCP ponger on {}", tcp_addr);
         match TcpListener::bind(&tcp_addr).await {
             Ok(acceptor) => {
                 tokio::spawn(async move {
                     loop {
                         tokio::select! {
                             _ = stop_rx.recv() => {
-                                info!("TCP ponger received stop signal");
+                                debug!("TCP ponger received stop signal");
                                 break;
                             }
                             accept_result = acceptor.accept() => {
                                 match accept_result {
                                     Ok((client, addr)) => {
-                                        info!("TCP client connected from {}", addr);
+                                        debug!("TCP client connected from {}", addr);
                                         tokio::spawn(pong_tcp(client));
                                     }
                                     Err(e) => {
@@ -52,7 +52,7 @@ pub async fn start(port: u16) -> Result<mpsc::Sender<()>> {
                 });
             }
             Err(e) => {
-                error!("Failed to bind TCP ponger: {}", e);
+                error!("Failed to bind TCP ponger to {}: {}", tcp_addr, e);
             }
         }
     });
@@ -66,20 +66,20 @@ pub async fn publish(command_tx: mpsc::Sender<Message>) -> Result<()> {
         .context("Failed to find free TCP port")?;
     // Create TCP publish args
     let client = ClientEndpoint {
-        local_proto: common::protocol::Protocol::Tcp.into(),
+        local_proto: cloudpub_common::protocol::Protocol::Tcp.into(),
         local_addr: "localhost".to_string(),
         local_port: port as u32,
         description: Some("TCP Ponger".to_string()),
         ..Default::default()
     };
 
-    info!("Publishing TCP service on port {}", port);
+    debug!("Publishing TCP service on port {}", port);
     command_tx.send(Message::EndpointStart(client)).await?;
     Ok(())
 }
 
 pub async fn ping_test(endpoint: ServerEndpoint, bare: bool) -> Result<String> {
-    info!("Running ping test on {}", endpoint);
+    debug!("Running ping test on {}", endpoint);
     let addr = format!("{}:{}", endpoint.remote_addr, endpoint.remote_port);
 
     let _stop_tx = start(endpoint.client.as_ref().unwrap().local_port as u16)
@@ -90,8 +90,8 @@ pub async fn ping_test(endpoint: ServerEndpoint, bare: bool) -> Result<String> {
     sleep(Duration::from_millis(100)).await;
 
     let settings = Settings {
-        warm_up_count: 10,
-        msg_count: 100,
+        warm_up_count: 1,
+        msg_count: 10,
         msg_size: 48,
         sleep_time: 0,
     };

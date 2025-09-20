@@ -7,6 +7,7 @@ pub mod logging;
 pub mod protocol;
 pub mod routing;
 pub mod transport;
+pub mod unix_tcp;
 pub mod utils;
 
 include!(concat!(env!("OUT_DIR"), "/build-vars.rs"));

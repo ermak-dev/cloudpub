@@ -34,28 +34,20 @@ pub struct {} {{",
 
     std::fs::write(format!("{}/protocol.rs", out_dir), generated)?;
 
-    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_DOMAIN");
-    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_VERSION");
-    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_ONPREM");
-    println!("cargo:rerun-if-env-changed=NEXT_PUBLIC_SITE_NAME");
-
     std::fs::write(
         format!("{}/build-vars.rs", out_dir),
         format!(
             r#"// Build variables
-pub const DOMAIN: &str = {:?};
+pub const DOMAIN: &str = "cloudpub.ru";
+pub const PORT: u16 = 443;
 pub const VERSION: &str = {:?};
-pub const LONG_VERSION: &str = "{}-{} ({})";
-pub const SITE_NAME: &str = {:?};
-pub const ONPREM: bool = {};
+pub const LONG_VERSION: &str = "{}-{} (cloudpub.ru)";
+pub const SITE_NAME: &str = "CloudPub";
+pub const ONPREM: bool = false;
 "#,
-            std::env::var("NEXT_PUBLIC_DOMAIN").unwrap(),
-            std::env::var("NEXT_PUBLIC_VERSION").unwrap(),
-            std::env::var("NEXT_PUBLIC_VERSION").unwrap(),
+            std::env::var("CARGO_PKG_VERSION").unwrap(),
+            std::env::var("CARGO_PKG_VERSION").unwrap(),
             chrono::Local::now().format("%Y%m%d%H%M%S"),
-            std::env::var("NEXT_PUBLIC_DOMAIN").unwrap(),
-            std::env::var("NEXT_PUBLIC_SITE_NAME").unwrap(),
-            std::env::var("NEXT_PUBLIC_ONPREM").unwrap()
         ),
     )?;
 

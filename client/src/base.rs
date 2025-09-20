@@ -6,13 +6,13 @@ use crate::service::{create_service_manager, ServiceConfig, ServiceStatus};
 use crate::shell::get_cache_dir;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use common::logging::{init_log, WorkerGuard};
-use common::protocol::message::Message;
-use common::protocol::{
+use cloudpub_common::logging::{init_log, WorkerGuard};
+use cloudpub_common::protocol::message::Message;
+use cloudpub_common::protocol::{
     ConnectState, EndpointClear, EndpointList, EndpointRemove, EndpointStart, EndpointStartAll,
     EndpointStop, ErrorKind, PerformUpgrade, Stop,
 };
-use common::{LONG_VERSION, VERSION};
+use cloudpub_common::{LONG_VERSION, VERSION};
 use dirs::cache_dir;
 use futures::future::FutureExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};

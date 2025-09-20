@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use common::protocol::message::Message;
-use common::protocol::{Break, ErrorInfo, ErrorKind, ProgressInfo};
-use common::transport::rustls::load_roots;
+use cloudpub_common::protocol::message::Message;
+use cloudpub_common::protocol::{Break, ErrorInfo, ErrorKind, ProgressInfo};
+use cloudpub_common::transport::rustls::load_roots;
 use dirs::cache_dir;
 use futures::stream::StreamExt;
 use parking_lot::RwLock;

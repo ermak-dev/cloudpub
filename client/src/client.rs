@@ -1,15 +1,17 @@
 use anyhow::{anyhow, bail, Context, Result};
 use backoff::backoff::Backoff;
-use common::data::DataChannel;
-use common::fair_channel::{fair_channel, FairSender};
-use common::protocol::message::Message;
-use common::protocol::{
+use cloudpub_common::data::DataChannel;
+use cloudpub_common::fair_channel::{fair_channel, FairSender};
+use cloudpub_common::protocol::message::Message;
+use cloudpub_common::protocol::{
     AgentInfo, ConnectState, Data, DataChannelAck, DataChannelData, DataChannelDataUdp,
     DataChannelEof, ErrorInfo, ErrorKind, HeartBeat, Protocol,
 };
-use common::transport::{AddrMaybeCached, SocketOpts, Transport, WebsocketTransport};
-use common::utils::{get_platform, proto_to_socket_addr, socket_addr_to_proto, udp_connect};
-use common::VERSION;
+use cloudpub_common::transport::{AddrMaybeCached, SocketOpts, Transport, WebsocketTransport};
+use cloudpub_common::utils::{
+    get_platform, proto_to_socket_addr, socket_addr_to_proto, udp_connect,
+};
+use cloudpub_common::VERSION;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::net::SocketAddr;
@@ -20,7 +22,7 @@ use tokio::sync::mpsc;
 use tokio::time::{self, Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
-use common::constants::{
+use cloudpub_common::constants::{
     run_control_chan_backoff, CONTROL_CHANNEL_SIZE, DATA_BUFFER_SIZE, DATA_CHANNEL_SIZE,
     DEFAULT_CLIENT_RETRY_INTERVAL_SECS, UDP_BUFFER_SIZE, UDP_TIMEOUT,
 };
@@ -29,7 +31,7 @@ use futures::future::FutureExt;
 use crate::config::{ClientConfig, ClientOpts};
 use crate::upgrade::handle_upgrade_available;
 use bytes::Bytes;
-use common::transport::ProtobufStream;
+use cloudpub_common::transport::ProtobufStream;
 
 #[cfg(feature = "plugins")]
 use crate::plugins::plugin_trait::PluginHandle;

@@ -15,6 +15,7 @@ use x509_parser::prelude::*;
 use crate::protocol::message::Message as ProtocolMessage;
 use crate::protocol::{read_message, write_message};
 use crate::transport::ProtobufStream;
+use crate::unix_tcp::NamedSocketAddr;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use p12::PFX;
@@ -28,7 +29,6 @@ use tokio_rustls::rustls::{
 };
 pub(crate) use tokio_rustls::TlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
-use tokio_unix_tcp::NamedSocketAddr;
 
 fn algorithm_name(oid: &der_parser::oid::Oid) -> Option<&'static str> {
     match oid.to_string().as_str() {

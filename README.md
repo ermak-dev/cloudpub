@@ -1,65 +1,238 @@
 # CloudPub
 
-Это репозиторий для клиентской части сервиса CloudPub, который является открытым и распространяется под лицензией Apache 2.0.
+Платформа безопасной публикации локальных сервисов в интернете. Открытый клиент под лицензией Apache 2.0.
 
 https://cloudpub.ru
 
 [![Звезды на GitHub](https://img.shields.io/github/stars/ermak-dev/cloudpub)](https://github.com/ermak-dev/cloudpub/stargazers)
 [![Лицензия](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Мощный, надежный и эффективный обратный прокси для преодоления NAT, разработанный на Rust
-
-CloudPub, подобно ngrok (https://github.com/inconshreveable/ngrok), облегчает предоставление услуг устройств, находящихся за NAT, в Интернете, используя сервер с общедоступным IP-адресом.
-
 ## Что такое CloudPub
 
-CloudPub – это отечественная альтернатива известному инструменту Ngrok, представляющая собой комбинацию прокси-сервера, шлюза и туннеля в локальную сеть. Его основная задача заключается в предоставлении публичного доступа к локальным ресурсам, таким как веб-приложения, базы данных, игровые сервера и другие сервисы, запущенные на вашем компьютере или в локальной сети.
+CloudPub – это отечественная альтернатива Ngrok, представляющая собой комбинацию прокси-сервера, шлюза и туннеля в локальную сеть. Его основная задача заключается в предоставлении публичного доступа к локальным ресурсам через защищенный канал.
 
-## Документация
+### Возможности
 
-Пожалуйста, посмотрите https://cloudpub.ru/docs
+- **Поддержка протоколов**: HTTP, HTTPS, TCP, UDP, 1C, WebDAV, Minecraft
+- **Безопасность**: Шифрование трафика через TLS, управление доступом
+- **Простота**: Публикация сервиса одной командой
+- **Кроссплатформенность**: Windows, Linux, macOS
+- **Автозапуск**: Установка в качестве системного сервиса
+- **API и SDK**: Программная интеграция для Rust и Python
 
-## Сборка клиентов
+## Компоненты проекта
 
-### Сборка с помощью Docker
+- **[client/](client/)** - CLI клиент (`clo`) для управления публикациями
+- **[common/](common/)** - Общая библиотека для всех компонентов
+- **[sdk/](sdk/)** - SDK для интеграции (Rust и Python)
 
-Для сборки клиентов для всех поддерживаемых архитектур используйте Docker:
+## Быстрый старт
+
+### Установка
+
+#### Готовые бинарные файлы
+
+Скачайте последнюю версию с [cloudpub.ru](https://cloudpub.ru) для вашей платформы.
+
+#### Из исходного кода
+
+```bash
+cargo build --release --package cloudpub-client
+```
+
+### Использование
+
+#### 1. Регистрация и авторизация
+
+```bash
+# Создайте аккаунт на https://cloudpub.ru/dashboard
+# Затем авторизуйтесь через CLI:
+clo login
+```
+
+#### 2. Публикация сервиса
+
+```bash
+# HTTP сервер на порту 8080
+clo publish http 8080
+
+# С именем и авторизацией
+clo publish -n "Мой сервис" -a basic http 8080
+
+# TCP сервис (например, база данных)
+clo publish tcp 5432
+
+# База 1С
+clo publish 1c /path/to/database
+```
+
+#### 3. Управление публикациями
+
+```bash
+# Список активных публикаций
+clo ls
+
+# Остановить публикацию
+clo stop <guid>
+
+# Удалить публикацию
+clo unpublish <guid>
+```
+
+## Основные команды
+
+| Команда | Описание |
+|---------|----------|
+| `login` | Авторизация на сервере |
+| `logout` | Завершение сессии |
+| `publish` | Добавить и запустить публикацию |
+| `unpublish` | Удалить публикацию |
+| `ls` | Список публикаций |
+| `run` | Запустить агент с сохраненными публикациями |
+| `start/stop` | Управление конкретной публикацией |
+| `clean` | Удалить все публикации |
+| `service` | Управление системным сервисом |
+| `upgrade` | Обновить клиент |
+
+## Примеры
+
+### HTTP/HTTPS сервисы
+
+```bash
+# Локальный веб-сервер
+clo publish http 3000
+
+# HTTPS на другом хосте
+clo publish https 192.168.1.100:443
+
+# С заголовками
+clo publish -H "X-Custom:value" http 8080
+```
+
+### Управление доступом
+
+```bash
+# Базовая авторизация
+clo publish -a basic http 8080
+
+# ACL правила (email:role)
+clo publish -A admin@example.com:admin -A user@example.com:reader http 8080
+```
+
+### Системный сервис
+
+```bash
+# Установить (требует sudo)
+sudo clo service install
+
+# Запустить
+sudo clo service start
+
+# Статус
+clo service status
+```
+
+## SDK
+
+### Rust SDK
+
+```rust
+use cloudpub_sdk::Connection;
+use cloudpub_common::protocol::{Protocol, Auth};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let mut conn = Connection::builder()
+        .credentials("user@example.com", "password")
+        .build()
+        .await?;
+
+    let endpoint = conn.publish(
+        Protocol::Http,
+        "localhost:8080".to_string(),
+        Some("Мой сервис".to_string()),
+        Some(Auth::None),
+    ).await?;
+
+    println!("Опубликовано: {}", endpoint.as_url());
+    Ok(())
+}
+```
+
+Подробнее в [sdk/rust/](sdk/rust/)
+
+### Python SDK
+
+```python
+from cloudpub_python_sdk import Connection, Protocol, Auth
+
+# Создание подключения
+conn = Connection(
+    config_path="/tmp/cloudpub.toml",
+    log_level="info",
+    verbose=True,
+    email="user@example.com",
+    password="password"
+)
+
+# Публикация HTTP сервиса
+endpoint = conn.publish(
+    Protocol.HTTP,
+    "localhost:8080",
+    "Мой сервис",
+    Auth.NONE
+)
+
+print(f"Опубликовано: {endpoint.url}")
+
+# Управление сервисами
+services = conn.ls()
+conn.start(endpoint.guid)
+conn.stop(endpoint.guid)
+conn.unpublish(endpoint.guid)
+```
+
+Подробнее в [sdk/python/](sdk/python/)
+
+## Сборка
+
+### Docker (все архитектуры)
 
 ```bash
 docker build --target artifacts --output type=local,dest=. .
 ```
 
-После выполнения команды в директории `artifacts` будут созданы клиенты для следующих архитектур:
-
-- `artifacts/x86_64/clo` - Linux x86_64
-- `artifacts/aarch64/clo` - Linux ARM64
-- `artifacts/arm/clo` - Linux ARM
-- `artifacts/armv5te/clo` - Linux ARMv5TE
-- `artifacts/win64/clo.exe` - Windows x86_64
+Результат в директории `artifacts`:
+- `x86_64/clo` - Linux x86_64
+- `aarch64/clo` - Linux ARM64
+- `arm/clo` - Linux ARM
+- `win64/clo.exe` - Windows x86_64
 
 ### Локальная сборка
 
-Для локальной сборки клиента для текущей архитектуры:
-
 ```bash
-cargo build -p client --release
+# CLI клиент
+cargo build -p cloudpub-client --release
+
+# SDK
+cargo build -p cloudpub-sdk --release
 ```
 
-Исполняемый файл будет создан в `target/release/client`.
+## Документация
 
-### Кросс-компиляция
+- [Официальная документация](https://cloudpub.ru/docs)
+- [Rust SDK](https://cloudpub.ru/docs/rust-sdk/cloudpub_sdk)
+- [Python SDK](https://cloudpub.ru/docs/python-sdk)
 
-Для сборки под конкретную архитектуру установите соответствующий target и выполните сборку:
+## Лицензия
 
-```bash
-# Для ARM64
-rustup target add aarch64-unknown-linux-musl
-cargo build -p client --target aarch64-unknown-linux-musl --release --no-default-features
+Apache License 2.0
 
-# Для Windows
-rustup target add x86_64-pc-windows-gnu
-cargo build -p client --target x86_64-pc-windows-gnu --release
-```
+## Поддержка
+
+- [GitHub Issues](https://github.com/ermak-dev/cloudpub/issues)
+- Email: support@cloudpub.ru
+- Telegram: [@cloudpub_support](https://t.me/cloudpub_support)
 
 ## Благодарности
 

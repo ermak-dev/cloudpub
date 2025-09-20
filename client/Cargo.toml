@@ -1,8 +1,12 @@
 [package]
-name = "client"
-version = "2.4.2"
+name = "cloudpub-client"
+version = "2.4.3"
 edition = "2021"
-authors = ["Anton Ermak <anton@ermak.dev>"]
+authors = ["CloudPub <support@cloudpub.ru>"]
+license = "Apache-2.0"
+description = "CloudPub CLI client for secure tunnel and service publishing"
+homepage = "https://github.com/ermak-dev/cloudpub"
+repository = "https://github.com/ermak-dev/cloudpub"
 
 [package.metadata.winres]
 OriginalFilename = "clo.exe"
@@ -10,8 +14,9 @@ FileDescription = "CloudPub client"
 ProductName = "CloudPub"
 
 [lib]
-name = "client"
+name = "cloudpub_client"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "client"
@@ -27,7 +32,7 @@ fluent-bundle = "0.16"
 unic-langid = "0.9"
 
 [dependencies]
-common = { path = "../common", features = ["rustls"] }
+cloudpub-common = { version = "2.4.3", path = "../common", features = ["rustls"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true

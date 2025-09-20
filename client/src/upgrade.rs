@@ -1,7 +1,7 @@
 use crate::config::ClientConfig;
 use crate::shell::get_cache_dir;
 use anyhow::{Context, Result};
-use common::protocol::message::Message;
+use cloudpub_common::protocol::message::Message;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

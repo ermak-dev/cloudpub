@@ -1,7 +1,7 @@
 use crate::service::{ServiceConfig, ServiceManager as ServiceManagerTrait, ServiceStatus};
 use anyhow::{anyhow, Context, Result};
-use common::protocol::message::Message;
-use common::protocol::Stop;
+use cloudpub_common::protocol::message::Message;
+use cloudpub_common::protocol::Stop;
 use std::ffi::OsString;
 use std::time::Duration;
 use tokio::sync::broadcast;

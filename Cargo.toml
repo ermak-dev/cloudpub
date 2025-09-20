@@ -1,5 +1,5 @@
 [workspace]
-members = ["common", "client"]
+members = ["common", "client", "sdk/rust"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -1,8 +1,8 @@
 use anyhow::{bail, Context, Result};
 use clap::builder::TypedValueParser;
 use clap::{Args, Subcommand};
-use common::config::MaskedString;
-use common::protocol::{
+use cloudpub_common::config::MaskedString;
+use cloudpub_common::protocol::{
     Acl, Auth, ClientEndpoint, DefaultPort, FilterAction, FilterRule, Header, Protocol, Role,
 };
 use serde::{Deserialize, Serialize};

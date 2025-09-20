@@ -2,7 +2,7 @@ use crate::plugins::minecraft::MinecraftPlugin;
 use crate::plugins::onec::OneCPlugin;
 use crate::plugins::webdav::WebdavPlugin;
 use crate::plugins::Plugin;
-use common::protocol::Protocol;
+use cloudpub_common::protocol::Protocol;
 use std::collections::HashMap;
 use std::sync::Arc;
 
