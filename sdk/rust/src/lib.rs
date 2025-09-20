@@ -20,7 +20,6 @@
 //! ```toml
 //! [dependencies]
 //! cloudpub-sdk = "2.4.2"
-//! cloudpub-common = "2.4.2"  # Требуется для типов протокола
 //! ```
 //!
 //! ## Базовое использование
@@ -29,7 +28,7 @@
 //!
 //! ```no_run
 //! use cloudpub_sdk::Connection;
-//! use cloudpub_common::protocol::{Protocol, Auth, Endpoint};
+//! use cloudpub_sdk::protocol::{Protocol, Auth, Endpoint};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -65,7 +64,7 @@
 //!
 //! ```no_run
 //! use cloudpub_sdk::Connection;
-//! use cloudpub_common::protocol::{
+//! use cloudpub_sdk::protocol::{
 //!     Protocol, Auth, Endpoint, Acl, Header, FilterRule,
 //!     Role, FilterAction
 //! };
@@ -157,7 +156,7 @@
 //! Контроль доступа к вашим сервисам на основе ролей пользователей:
 //!
 //! ```no_run
-//! # use cloudpub_common::protocol::{Acl, Role};
+//! # use cloudpub_sdk::protocol::{Acl, Role};
 //! let acl = vec![
 //!     Acl {
 //!         user: "admin@example.com".to_string(),
@@ -183,7 +182,7 @@
 //! Добавление пользовательских заголовков в HTTP/HTTPS ответы:
 //!
 //! ```no_run
-//! # use cloudpub_common::protocol::Header;
+//! # use cloudpub_sdk::protocol::Header;
 //! let headers = vec![
 //!     Header {
 //!         name: "X-API-Version".to_string(),
@@ -206,7 +205,7 @@
 //! Правила обрабатываются по порядку (по полю `order`), и первое подходящее правило применяется.
 //!
 //! ```no_run
-//! # use cloudpub_common::protocol::{FilterRule, FilterAction};
+//! # use cloudpub_sdk::protocol::{FilterRule, FilterAction};
 //! let rules = vec![
 //!     // Разрешить доступ к API только из локальной сети
 //!     FilterRule {
@@ -272,7 +271,7 @@
 //!
 //! ```no_run
 //! # async fn http_example(conn: &mut cloudpub_sdk::Connection) -> anyhow::Result<()> {
-//! use cloudpub_common::protocol::{Protocol, Auth, Endpoint};
+//! use cloudpub_sdk::protocol::{Protocol, Auth, Endpoint};
 //!
 //! // Публикация HTTP сервиса с базовой аутентификацией
 //! let http_endpoint = conn.publish(
@@ -303,7 +302,7 @@
 //!
 //! ```no_run
 //! # async fn tcp_example(conn: &mut cloudpub_sdk::Connection) -> anyhow::Result<()> {
-//! use cloudpub_common::protocol::{Protocol, Auth};
+//! use cloudpub_sdk::protocol::{Protocol, Auth};
 //!
 //! // Публикация TCP сервиса (например, SSH)
 //! let tcp_endpoint = conn.publish(
@@ -334,7 +333,7 @@
 //!
 //! ```no_run
 //! # async fn ws_example(conn: &mut cloudpub_sdk::Connection) -> anyhow::Result<()> {
-//! use cloudpub_common::protocol::{Protocol, Auth};
+//! use cloudpub_sdk::protocol::{Protocol, Auth};
 //!
 //! // Публикация TCP сервиса
 //! let tcp_endpoint = conn.publish(
@@ -365,7 +364,7 @@
 //!
 //! ```no_run
 //! # async fn rtsp_example(conn: &mut cloudpub_sdk::Connection) -> anyhow::Result<()> {
-//! use cloudpub_common::protocol::{Protocol, Auth};
+//! use cloudpub_sdk::protocol::{Protocol, Auth};
 //!
 //! // Публикация RTSP потока с учетными данными в URL
 //! // Формат: rtsp://username:password@host:port/path
@@ -399,7 +398,7 @@
 //!
 //! ```no_run
 //! # async fn list_example(conn: &mut cloudpub_sdk::Connection) -> anyhow::Result<()> {
-//! use cloudpub_common::protocol::Endpoint;
+//! use cloudpub_sdk::protocol::Endpoint;
 //! // Получить все зарегистрированные сервисы
 //! let services = conn.ls().await?;
 //!
@@ -547,7 +546,7 @@
 //!
 //! ```no_run
 //! use cloudpub_sdk::Connection;
-//! use cloudpub_common::protocol::{
+//! use cloudpub_sdk::protocol::{
 //!     Protocol, Auth, Endpoint, Acl, Header, FilterRule,
 //!     Role, FilterAction
 //! };
@@ -683,6 +682,7 @@
 //! Этот SDK лицензирован под лицензией Apache 2.0.
 
 pub use cloudpub_client::config::ClientOpts;
+pub use cloudpub_common::protocol;
 
 mod builder;
 mod connection;

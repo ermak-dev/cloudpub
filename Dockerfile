@@ -99,23 +99,23 @@ ENV     PATH="$PATH:$HOME/bin"
 RUN     mkdir -p artifacts/win64 && \
         RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01" \
         cargo build -p client --target x86_64-pc-windows-gnu --profile minimal && \
-        cp target/x86_64-pc-windows-gnu/minimal/client.exe artifacts/win64/clo.exe
+        cp target/x86_64-pc-windows-gnu/minimal/clo.exe artifacts/win64/clo.exe
 
 RUN     mkdir -p artifacts/x86_64 && \
         cargo build -p client --target x86_64-unknown-linux-gnu --profile minimal && \
-        cp target/x86_64-unknown-linux-gnu/minimal/client artifacts/x86_64/clo
+        cp target/x86_64-unknown-linux-gnu/minimal/clo artifacts/x86_64/clo
 
 RUN     mkdir -p artifacts/aarch64 && \
         cargo build -p client --target aarch64-unknown-linux-musl --profile minimal --no-default-features && \
-        cp target/aarch64-unknown-linux-musl/minimal/client artifacts/aarch64/clo
+        cp target/aarch64-unknown-linux-musl/minimal/clo artifacts/aarch64/clo
 
 RUN     mkdir -p artifacts/arm && \
         cargo build -p client --target arm-unknown-linux-musleabi --profile minimal --no-default-features && \
-        cp target/arm-unknown-linux-musleabi/minimal/client artifacts/arm/clo
+        cp target/arm-unknown-linux-musleabi/minimal/clo artifacts/arm/clo
 
 RUN     mkdir -p artifacts/armv5te && \
         cargo build -p client --target armv5te-unknown-linux-musleabi --profile minimal --no-default-features && \
-        cp target/armv5te-unknown-linux-musleabi/minimal/client artifacts/armv5te/clo
+        cp target/armv5te-unknown-linux-musleabi/minimal/clo artifacts/armv5te/clo
 
 # Build MIPS (little-endian) target with nightly toolchain and build-std
 RUN     mkdir -p artifacts/mipsel && \
@@ -128,7 +128,7 @@ RUN     mkdir -p artifacts/mipsel && \
         --no-default-features \
         -Z build-std=std,panic_abort,core,alloc \
         -Z build-std-features=panic_immediate_abort && \
-        cp target/mipsel-unknown-linux-gnu/minimal/client artifacts/mipsel/clo && \
+        cp target/mipsel-unknown-linux-gnu/minimal/clo artifacts/mipsel/clo && \
         file artifacts/mipsel/clo
 
 FROM scratch AS artifacts

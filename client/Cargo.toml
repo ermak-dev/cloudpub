@@ -19,7 +19,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "client"
+name = "clo"
 path = "src/main.rs"
 
 [features]

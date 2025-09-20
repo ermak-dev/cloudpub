@@ -42,9 +42,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
 
-use cloudpub_common::protocol;
-use cloudpub_common::protocol::Endpoint;
-use cloudpub_sdk::Connection as RustConnection;
+use cloudpub_sdk::protocol::Endpoint;
+use cloudpub_sdk::{protocol, Connection as RustConnection};
 use pyo3::create_exception;
 
 // Создание пользовательских исключений для ошибок CloudPub
@@ -521,7 +520,7 @@ impl Connection {
 
         // Добавление колбэка проверки сигналов для Python
         let check_signal_fn = Arc::new(move || -> anyhow::Result<()> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 py.check_signals()
                     .map_err(|e| anyhow::anyhow!("Прерывание сигнала Python: {}", e))
             })
@@ -591,7 +590,7 @@ impl Connection {
     ///     dict: Словарь пар ключ-значение конфигурации
     fn options(&self, py: Python) -> PyResult<Py<PyDict>> {
         let options = self.connection.read().options();
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         for (key, value) in options {
             dict.set_item(key, value)?;
         }
@@ -878,20 +877,17 @@ fn cloudpub_python_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Добавление исключений
     m.add(
         "CloudPubError",
-        m.py().get_type_bound::<exceptions::CloudPubError>(),
+        m.py().get_type::<exceptions::CloudPubError>(),
     )?;
     m.add(
         "ConnectionError",
-        m.py().get_type_bound::<exceptions::ConnectionError>(),
+        m.py().get_type::<exceptions::ConnectionError>(),
     )?;
     m.add(
         "AuthenticationError",
-        m.py().get_type_bound::<exceptions::AuthenticationError>(),
+        m.py().get_type::<exceptions::AuthenticationError>(),
     )?;
-    m.add(
-        "ConfigError",
-        m.py().get_type_bound::<exceptions::ConfigError>(),
-    )?;
+    m.add("ConfigError", m.py().get_type::<exceptions::ConfigError>())?;
 
     Ok(())
 }

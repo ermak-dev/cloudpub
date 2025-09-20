@@ -15,6 +15,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Rust",
   "Operating System :: OS Independent",
   "Development Status :: 4 - Beta",
@@ -23,3 +25,6 @@ classifiers = [
 [tool.maturin]
 module-name = "cloudpub_python_sdk"
 python-source = "."
+
+[tool.setuptools.package-data]
+cloudpub_python_sdk = ["example.py"]

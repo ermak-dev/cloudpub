@@ -262,11 +262,11 @@ impl SocketOpts {
                 }
             }
             #[cfg(unix)]
-            Stream::Unix(conn) =>
+            Stream::Unix(_conn) =>
             {
                 #[cfg(target_os = "linux")]
                 if let Some(priority) = self.priority {
-                    if let Err(e) = set_priority(conn, priority as libc::c_int) {
+                    if let Err(e) = set_priority(_conn, priority as libc::c_int) {
                         error!("Failed to set socket priority: {:#}", e);
                     }
                 }

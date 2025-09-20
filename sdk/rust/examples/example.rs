@@ -16,7 +16,7 @@
 //! 3. Локальные сервисы для публикации (пример использует localhost порты)
 
 use anyhow::Result;
-use cloudpub_common::protocol::{Auth, Endpoint, Protocol};
+use cloudpub_sdk::protocol::{Auth, Endpoint, Protocol};
 use cloudpub_sdk::Connection;
 use std::io;
 use std::path::Path;

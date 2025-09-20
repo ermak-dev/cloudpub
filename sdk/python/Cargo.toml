@@ -14,10 +14,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0"
-pyo3 = { version = "0.22", features = ["extension-module", "auto-initialize"] }
+pyo3 = { version = "0.26", features = [
+  "extension-module",
+  "auto-initialize",
+  "generate-import-lib",
+  "abi3",
+  "abi3-py37",
+] }
 tokio = { version = "1.46", features = ["full"] }
 parking_lot = "0.12"
 
 # Internal dependencies
 cloudpub-sdk = { version = "2.4.3", path = "../rust" }
-cloudpub-common = { version = "2.4.3", path = "../../common" }

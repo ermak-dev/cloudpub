@@ -2,10 +2,14 @@
 
 Платформа безопасной публикации локальных сервисов в интернете. Открытый клиент под лицензией Apache 2.0.
 
-https://cloudpub.ru
+ - Сайт проекта: https://cloudpub.ru
+ - Документация: https://cloudpub.ru/docs
 
 [![Звезды на GitHub](https://img.shields.io/github/stars/ermak-dev/cloudpub)](https://github.com/ermak-dev/cloudpub/stargazers)
 [![Лицензия](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Образ для Docker](https://img.shields.io/docker/pulls/cloudpub/cloudpub)](https://hub.docker.com/r/cloudpub/cloudpub)
+[![Rust SDK](https://img.shields.io/crates/v/cloudpub-sdk.svg)](https://crates.io/crates/cloudpub-sdk)
+[![Python SDK](https://img.shields.io/pypi/v/cloudpub-python-sdk)](https://pypi.org/project/cloudpub-python-sdk/)
 
 ## Что такое CloudPub
 
@@ -13,7 +17,8 @@ CloudPub – это отечественная альтернатива Ngrok, �
 
 ### Возможности
 
-- **Поддержка протоколов**: HTTP, HTTPS, TCP, UDP, 1C, WebDAV, Minecraft
+- **Поддержка множества протоколов**: HTTP, HTTPS, TCP, UDP, 1C, WebDAV, Minecraft, RTSP
+- **Плагинная архитектура**: Легкое добавление новых протоколов
 - **Безопасность**: Шифрование трафика через TLS, управление доступом
 - **Простота**: Публикация сервиса одной командой
 - **Кроссплатформенность**: Windows, Linux, macOS
@@ -23,8 +28,9 @@ CloudPub – это отечественная альтернатива Ngrok, �
 ## Компоненты проекта
 
 - **[client/](client/)** - CLI клиент (`clo`) для управления публикациями
-- **[common/](common/)** - Общая библиотека для всех компонентов
-- **[sdk/](sdk/)** - SDK для интеграции (Rust и Python)
+- **[common/](common/)** - Общие компоненты и описание протокола
+- **[sdk/rust](sdk/rust)** - SDK для Rust
+- **[sdk/pytrhon](sdk/python)** - SDK для Python
 
 ## Быстрый старт
 
@@ -32,12 +38,18 @@ CloudPub – это отечественная альтернатива Ngrok, �
 
 #### Готовые бинарные файлы
 
-Скачайте последнюю версию с [cloudpub.ru](https://cloudpub.ru) для вашей платформы.
+Скачайте последнюю версию с [cloudpub.ru](https://cloudpub.ru/docs) для вашей платформы.
 
 #### Из исходного кода
 
 ```bash
 cargo build --release --package cloudpub-client
+```
+
+#### Установка через Cargo
+
+```bash
+cargo install cloudpub-client
 ```
 
 ### Использование
@@ -62,8 +74,8 @@ clo publish -n "Мой сервис" -a basic http 8080
 # TCP сервис (например, база данных)
 clo publish tcp 5432
 
-# База 1С
-clo publish 1c /path/to/database
+# Файлы (через WebDAV)
+clo publish webdav /path/to/files
 ```
 
 #### 3. Управление публикациями
@@ -116,7 +128,7 @@ clo publish -H "X-Custom:value" http 8080
 clo publish -a basic http 8080
 
 # ACL правила (email:role)
-clo publish -A admin@example.com:admin -A user@example.com:reader http 8080
+clo publish -a form -A admin@example.com:admin -A user@example.com:reader http 8080
 ```
 
 ### Системный сервис
@@ -159,7 +171,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-Подробнее в [sdk/rust/](sdk/rust/)
+ - [Полная документация](https://docs.rs/cloudpub-sdk/latest/cloudpub_sdk/)
 
 ### Python SDK
 
@@ -192,7 +204,7 @@ conn.stop(endpoint.guid)
 conn.unpublish(endpoint.guid)
 ```
 
-Подробнее в [sdk/python/](sdk/python/)
+ - [Полная документация](https://cloudpub.ru/docs/python-sdk)
 
 ## Сборка
 
@@ -221,7 +233,7 @@ cargo build -p cloudpub-sdk --release
 ## Документация
 
 - [Официальная документация](https://cloudpub.ru/docs)
-- [Rust SDK](https://cloudpub.ru/docs/rust-sdk/cloudpub_sdk)
+- [Rust SDK](https://docs.rs/cloudpub-sdk/latest/cloudpub_sdk/)
 - [Python SDK](https://cloudpub.ru/docs/python-sdk)
 
 ## Лицензия
