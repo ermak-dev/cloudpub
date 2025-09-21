@@ -1,6 +1,6 @@
 [package]
 name = "cloudpub-python-sdk"
-version = "2.4.3"
+version = "2.4.4"
 edition = "2021"
 authors = ["CloudPub <support@cloudpub.ru>"]
 license = "Apache-2.0"
@@ -25,4 +25,4 @@ tokio = { version = "1.46", features = ["full"] }
 parking_lot = "0.12"
 
 # Internal dependencies
-cloudpub-sdk = { version = "2.4.3", path = "../rust" }
+cloudpub-sdk = { version = "2.4.4", path = "../rust" }

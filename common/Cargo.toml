@@ -1,6 +1,6 @@
 [package]
 name = "cloudpub-common"
-version = "2.4.3"
+version = "2.4.4"
 edition = "2021"
 authors = ["CloudPub <support@cloudpub.ru>"]
 license = "Apache-2.0"

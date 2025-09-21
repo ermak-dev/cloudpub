@@ -99,7 +99,7 @@ WORKDIR /workspace/sdk/python
 # Build arguments with default values
 ARG NEXT_PUBLIC_DOMAIN=cloudpub.ru
 ARG NEXT_PUBLIC_PORT=443
-ARG NEXT_PUBLIC_VERSION=2.4.3
+ARG NEXT_PUBLIC_VERSION=2.x
 ARG NEXT_PUBLIC_ONPREM=false
 ARG NEXT_PUBLIC_SITE_NAME=CloudPub
 
@@ -111,7 +111,7 @@ ENV NEXT_PUBLIC_ONPREM=${NEXT_PUBLIC_ONPREM}
 ENV NEXT_PUBLIC_SITE_NAME=${NEXT_PUBLIC_SITE_NAME}
 
 # Create artifacts directory
-RUN mkdir -p /artifacts
+RUN mkdir -p /artifacts/wheels
 
 # Configure cross-compilation environment
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/usr/bin/x86_64-w64-mingw32-gcc
@@ -123,7 +123,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/workspace/target \
     maturin build --release \
         --target x86_64-pc-windows-gnu \
-        --out /artifacts \
+        --out /artifacts/wheels \
     && echo "Built Windows x86_64 wheel"
 
 # Build Linux x86_64 wheel
@@ -133,7 +133,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     maturin build --release \
         --target x86_64-unknown-linux-gnu \
         --zig \
-        --out /artifacts \
+        --out /artifacts/wheels \
     && echo "Built Linux x86_64 wheel"
 
 # Build Linux aarch64 wheel
@@ -143,7 +143,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     maturin build --release \
         --target aarch64-unknown-linux-gnu \
         --zig \
-        --out /artifacts \
+        --out /artifacts/wheels \
     && echo "Built Linux aarch64 wheel"
 
 # List all built artifacts

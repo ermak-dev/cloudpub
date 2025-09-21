@@ -62,5 +62,5 @@ Form Auth - это аутентификация через HTML-форму, ко
 
 Пример:
 ```bash
-clo publish --acl user@example.com:reader --acl admin@example.com:admin http 8080
+clo publish --auth basic --acl user@example.com:reader --acl admin@example.com:admin http 8080
 ```
