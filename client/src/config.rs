@@ -8,6 +8,8 @@ use std::str::FromStr;
 use crate::options::ConfigOption;
 pub use cloudpub_common::config::{MaskedString, TransportConfig};
 use lazy_static::lazy_static;
+#[cfg(target_os = "android")]
+use machineid_rs_termux as machineid_rs;
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 use std::collections::HashMap;
 use std::fs::{self, create_dir_all, File};

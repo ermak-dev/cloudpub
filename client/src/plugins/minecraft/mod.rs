@@ -30,6 +30,10 @@ const JDK_URL: &str =
 #[cfg(target_os = "macos")]
 const JDK_URL: &str = "https://download.java.net/java/GA/jdk23/3c5b90190c68498b986a97f276efd28a/37/GPL/openjdk-23_macos-x64_bin.tar.gz";
 
+#[cfg(target_os = "android")] // TODO
+const JDK_URL: &str =
+    "";
+
 // Minecraft server 1.21.8
 const MINECRAFT_SERVER_URL: &str =
     "https://piston-data.mojang.com/v1/objects/6bce4ef400e4efaa63a13d5e6f6b500be969ef81/server.jar";
