@@ -1,6 +1,6 @@
 [package]
 name = "cloudpub-client"
-version = "2.4.4"
+version = "2.4.5"
 edition = "2021"
 authors = ["CloudPub <support@cloudpub.ru>"]
 license = "Apache-2.0"
@@ -32,7 +32,7 @@ fluent-bundle = "0.16"
 unic-langid = "0.9"
 
 [dependencies]
-cloudpub-common = { version = "2.4.4", path = "../common", features = ["rustls"] }
+cloudpub-common = { version = "2.4.5", path = "../common", features = ["rustls"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
@@ -51,7 +51,7 @@ reqwest = { default-features = false, version = "0.12.22", features = [
   "rustls-tls",
 ] }
 indicatif = { version = "0.18.0", features = ["tokio", "improved_unicode"] }
-zip = "4.3.0"
+zip = { version = "5.1.1" }
 toml = "0.9.2"
 walkdir = "2.5.0"
 uuid.workspace = true

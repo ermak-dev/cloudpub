@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{LABEL}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+{PROGRAM_ARGS}
+    </array>
+
+    <!-- Run at system startup -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep the service running -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Important for self-upgrades: Don't kill child processes -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+
+    <!-- Logging paths -->
+    <key>StandardErrorPath</key>
+    <string>/tmp/{SERVICE_NAME}.err</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/{SERVICE_NAME}.out</string>
+
+    <!-- Working directory (optional) -->
+    <!-- <key>WorkingDirectory</key>
+    <string>/path/to/working/dir</string> -->
+
+    <!-- Environment variables (optional) -->
+    <!-- <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict> -->
+
+    <!-- Restart on crash -->
+    <key>OnDemand</key>
+    <false/>
+
+    <!-- Resource limits (optional) -->
+    <!-- <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfProcesses</key>
+        <integer>100</integer>
+        <key>ResidentSetSize</key>
+        <integer>536870912</integer>
+    </dict> -->
+</dict>
+</plist>

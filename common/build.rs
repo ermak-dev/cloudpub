@@ -44,6 +44,8 @@ pub const VERSION: &str = {:?};
 pub const LONG_VERSION: &str = "{}-{} (cloudpub.ru)";
 pub const SITE_NAME: &str = "CloudPub";
 pub const ONPREM: bool = false;
+pub const BRANCH: &str = "stable";
+pub const TRAFFIC_LIMIT: usize = 0;
 "#,
             std::env::var("CARGO_PKG_VERSION").unwrap(),
             std::env::var("CARGO_PKG_VERSION").unwrap(),

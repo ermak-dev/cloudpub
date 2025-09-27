@@ -1,0 +1,11 @@
+[Unit]
+Description=CloudPub Upgrade {TIMESTAMP}
+After=cloudpub.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash {SCRIPT_PATH}
+ExecStartPost=/bin/sh -c 'sleep 2; rm -f {SCRIPT_PATH} /etc/systemd/system/cloudpub-upgrade-{TIMESTAMP}.service; systemctl daemon-reload'
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal

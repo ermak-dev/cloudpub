@@ -1,0 +1,24 @@
+[Unit]
+Description={DESCRIPTION}
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={EXECUTABLE} {ARGS}
+Restart=on-failure
+RestartSec=5s
+
+# User and working directory if needed
+# User={USER}
+# WorkingDirectory={WORKING_DIR}
+
+# Security hardening (optional but recommended)
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Resource limits (optional)
+# MemoryLimit=512M
+# CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

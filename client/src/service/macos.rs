@@ -4,6 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+// Include the launchd plist template at compile time
+const LAUNCHD_PLIST_TEMPLATE: &str = include_str!("templates/launchd.plist");
+
 pub struct MacOSServiceManager {
     config: ServiceConfig,
 }
@@ -20,40 +23,18 @@ impl MacOSServiceManager {
     fn create_plist_file(&self) -> Result<()> {
         let executable = self.config.executable_path.to_string_lossy();
 
-        // Convert args to XML array elements
-        let args_xml = self
-            .config
-            .args
-            .iter()
-            .map(|arg| format!("\t\t<string>{}</string>", arg))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Build the ProgramArguments array with proper indentation
+        let mut program_args = vec![format!("        <string>{}</string>", executable)];
+        for arg in &self.config.args {
+            program_args.push(format!("        <string>{}</string>", arg));
+        }
+        let program_args_xml = program_args.join("\n");
 
-        let program_args = format!("\t\t<string>{}</string>\n{}", executable, args_xml);
-
-        let plist_content = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{}</string>
-    <key>ProgramArguments</key>
-    <array>
-{}
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardErrorPath</key>
-    <string>/tmp/{}.err</string>
-    <key>StandardOutPath</key>
-    <string>/tmp/{}.out</string>
-</dict>
-</plist>"#,
-            self.config.name, program_args, self.config.name, self.config.name
-        );
+        // Replace placeholders in the template
+        let plist_content = LAUNCHD_PLIST_TEMPLATE
+            .replace("{LABEL}", &self.config.name)
+            .replace("{PROGRAM_ARGS}", &program_args_xml)
+            .replace("{SERVICE_NAME}", &self.config.name);
 
         fs::write(self.plist_path(), plist_content)
             .context("Failed to write LaunchDaemon plist file")
@@ -62,6 +43,9 @@ impl MacOSServiceManager {
 
 impl ServiceManager for MacOSServiceManager {
     fn install(&self) -> Result<()> {
+        // Copy config to system location
+        self.config.copy_config_to_system()?;
+
         // Create the plist file
         self.create_plist_file()?;
 

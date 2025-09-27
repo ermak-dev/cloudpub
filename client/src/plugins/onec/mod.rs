@@ -88,12 +88,27 @@ impl Plugin for OneCPlugin {
     ) -> Result<SubProcess> {
         let env = check_enviroment(config.clone())?;
 
+        #[cfg(not(target_os = "windows"))]
         let one_c_publish_dir = config
             .read()
             .one_c_publish_dir
             .as_ref()
             .map(PathBuf::from)
             .unwrap_or_else(|| get_cache_dir(ONEC_SUBDIR).unwrap());
+
+        #[cfg(target_os = "windows")]
+        let one_c_publish_dir = config
+            .read()
+            .one_c_publish_dir
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(
+                    std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".to_string()),
+                )
+                .join("CloudPub")
+                .join(ONEC_SUBDIR)
+            });
 
         let publish_dir = one_c_publish_dir.join(&endpoint.guid);
 

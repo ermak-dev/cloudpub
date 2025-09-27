@@ -34,6 +34,7 @@ enum ErrorKind {
   PUBLISH_FAILED = 4;
   EXECUTE_FAILED = 5;
   SERVER_ERROR = 6;
+  UPGRADE_FAILED = 7;
 }
 
 enum FilterAction {
@@ -119,6 +120,8 @@ message AgentInfo {
   // Indicates that all created publications on this channel are transient
   // and deleted after disconnection
   bool   transient = 12;
+  // Run as service
+  bool is_service = 13;
 }
 
 message DataChannelInfo {

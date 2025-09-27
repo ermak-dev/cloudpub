@@ -16,6 +16,8 @@ export NEXT_PUBLIC_DOMAIN=cloudpub.ru
 export NEXT_PUBLIC_PORT=443
 export NEXT_PUBLIC_ONPREM=false
 export NEXT_PUBLIC_SITE_NAME=CloudPub
+export NEXT_PUBLIC_BRANCH=stable
+export NEXT_PUBLIC_TRAFFIC_LIMIT=0
 
 # Check if running on macOS
 if [[ "$OSTYPE" != "darwin"* ]]; then

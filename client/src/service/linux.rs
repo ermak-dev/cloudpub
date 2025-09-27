@@ -4,6 +4,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+// Include the systemd service template at compile time
+const SYSTEMD_SERVICE_TEMPLATE: &str = include_str!("templates/systemd.service");
+
 pub struct LinuxServiceManager {
     config: ServiceConfig,
 }
@@ -21,22 +24,11 @@ impl LinuxServiceManager {
         let executable = self.config.executable_path.to_string_lossy();
         let args = self.config.args.join(" ");
 
-        let service_content = format!(
-            r#"[Unit]
-Description={}
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={} {}
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-"#,
-            self.config.description, executable, args
-        );
+        // Replace placeholders in the template
+        let service_content = SYSTEMD_SERVICE_TEMPLATE
+            .replace("{DESCRIPTION}", &self.config.description)
+            .replace("{EXECUTABLE}", &executable)
+            .replace("{ARGS}", &args);
 
         fs::write(self.service_file_path(), service_content)
             .context("Failed to write systemd service file")
@@ -45,6 +37,9 @@ WantedBy=multi-user.target
 
 impl ServiceManager for LinuxServiceManager {
     fn install(&self) -> Result<()> {
+        // Copy config to system location
+        self.config.copy_config_to_system()?;
+
         // Create the service file
         self.create_service_file()?;
 

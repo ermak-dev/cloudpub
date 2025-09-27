@@ -200,6 +200,7 @@ impl<T: 'static + Transport> Client<T> {
                 server_host_and_port: host_and_port.clone(),
                 transient: self.opts.transient,
                 secondary: self.opts.secondary,
+                is_service: self.opts.is_service,
             };
 
             debug!("Sending hello: {:?}", agent_info);
@@ -366,6 +367,7 @@ impl<T: 'static + Transport> Client<T> {
 
                                     // Check if endpoint handled by plugin server
                                     let client = endpoint.client.unwrap();
+                                    #[allow(unused_mut)]
                                     let mut local_addr = format!("{}:{}", client.local_addr, client.local_port);
                                     #[cfg(feature = "plugins")]
                                     if let Some(handle) = self.plugin_processes.get(&endpoint.guid) {
@@ -497,6 +499,32 @@ impl<T: 'static + Transport> Client<T> {
                                     info!("Breaking operation for guid: {}", break_msg.guid);
                                     #[cfg(feature = "plugins")]
                                     self.plugin_processes.remove(&break_msg.guid);
+                                }
+
+                                Message::PerformUpgrade(info) => {
+                                    let config_clone = self.config.clone();
+                                    #[cfg(feature = "plugins")]
+                                    self.plugin_processes.clear();
+                                    self.services.clear();
+                                    self.data_channels.clear();
+
+                                    if let Err(e) = handle_upgrade_available(
+                                        &info.version,
+                                        config_clone,
+                                        self.opts.gui,
+                                        command_rx,
+                                        result_tx,
+                                    )
+                                    .await
+                                    {
+                                        conn.send_message(&Message::Error(ErrorInfo {
+                                            kind: ErrorKind::UpgradeFailed.into(),
+                                            message: e.to_string(),
+                                            guid: String::new(),
+                                        }))
+                                        .await
+                                        .context("Can't send Error event")?;
+                                    }
                                 }
 
                                 v => {

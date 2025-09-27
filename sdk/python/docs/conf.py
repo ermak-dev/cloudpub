@@ -17,6 +17,8 @@ extensions = [
     'sphinx_rtd_theme',
 ]
 
+html_baseurl = '/docs/python-sdk/'
+
 autosummary_generate = True
 autosummary_imported_members = True
 

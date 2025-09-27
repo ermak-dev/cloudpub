@@ -20,7 +20,10 @@ pub enum Commands {
     #[clap(about = "Show all config options and their values")]
     Options,
     #[clap(about = "Run all registered services")]
-    Run,
+    Run {
+        #[clap(long, hide = true)]
+        run_as_service: bool,
+    },
     #[clap(about = "Start publication")]
     Start(GuidArgs),
     #[clap(about = "Stop publication")]
@@ -57,7 +60,10 @@ pub enum Commands {
 #[derive(Subcommand, Debug, Clone)]
 pub enum ServiceAction {
     #[clap(about = "Install as a system service")]
-    Install,
+    Install {
+        #[clap(short, long, help = "Path to config file to use for the service")]
+        conf: Option<String>,
+    },
 
     #[clap(about = "Uninstall the system service")]
     Uninstall,

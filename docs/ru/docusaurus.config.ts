@@ -69,7 +69,7 @@ const config: Config = {
           },
         },
         theme: {
-          customCss: "./src/css/custom.css",
+            customCss: "./src/css/custom.css",
         },
       } satisfies Preset.Options,
     ],
@@ -77,6 +77,7 @@ const config: Config = {
 
   themeConfig: {
     image: "img/welcome.png",
+    onPageNav: 'none',
     navbar: {
       title: "CloudPub",
       logo: {

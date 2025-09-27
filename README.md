@@ -204,7 +204,7 @@ conn.stop(endpoint.guid)
 conn.unpublish(endpoint.guid)
 ```
 
- - [Полная документация](https://cloudpub.ru/docs/python-sdk)
+ - [Полная документация](https://cloudpub.ru/docs/python-sdk/index.html)
 
 ## Сборка
 
@@ -234,7 +234,7 @@ cargo build -p cloudpub-sdk --release
 
 - [Официальная документация](https://cloudpub.ru/docs)
 - [Rust SDK](https://docs.rs/cloudpub-sdk/latest/cloudpub_sdk/)
-- [Python SDK](https://cloudpub.ru/docs/python-sdk)
+- [Python SDK](https://cloudpub.ru/docs/python-sdk/index.html)
 
 ## Лицензия
 

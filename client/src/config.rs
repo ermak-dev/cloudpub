@@ -114,6 +114,7 @@ pub struct ClientOpts {
     pub credentials: Option<(String, String)>,
     pub transient: bool,
     pub secondary: bool,
+    pub is_service: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -144,7 +145,7 @@ impl ClientConfig {
     }
 
     pub fn from_file(path: &PathBuf, readonly: bool) -> Result<Self> {
-        if !path.exists() {
+        if !path.exists() && !readonly {
             let default_config = Self::default();
             debug!("Creating default config at {:?}", default_config);
             let s = toml::to_string_pretty(&default_config)

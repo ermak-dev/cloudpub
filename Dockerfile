@@ -57,11 +57,14 @@ RUN     cargo chef prepare --recipe-path recipe.json
 ##########################################
 FROM    dev AS builder
 COPY    --from=planner $HOME/recipe.json $HOME/recipe.json
-ENV     NEXT_PUBLIC_VERSION="2.3.1"
+ENV     NEXT_PUBLIC_VERSION="2.4.5"
 
 ENV     NEXT_PUBLIC_DOMAIN="cloudpub.ru"
 ENV     NEXT_PUBLIC_ONPREM="false"
 ENV     NEXT_PUBLIC_SITE_NAME="CloudPub"
+ENV     NEXT_PUBLIC_TRAFFIC_LIMIT=0
+ENV     NEXT_PUBLIC_PORT=443
+ENV     NEXT_PUBLIC_BRANCH="stable"
 
 ENV     CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=/usr/bin/arm-linux-gnueabihf-gcc
 ENV     CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABI_LINKER=/usr/bin/arm-linux-gnueabi-gcc
@@ -73,22 +76,21 @@ ENV     CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/mipsel-linux-gnu-g
 
 WORKDIR $HOME
 
-RUN     cargo chef cook --bin client --profile minimal --target x86_64-unknown-linux-gnu --recipe-path $HOME/recipe.json
-RUN     cargo chef cook --bin client --profile minimal --target arm-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
-RUN     cargo chef cook --bin client --profile minimal --target armv5te-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
-RUN     cargo chef cook --bin client --profile minimal --target aarch64-unknown-linux-musl --no-default-features --recipe-path $HOME/recipe.json
+RUN     cargo chef cook --bin clo --profile minimal --target x86_64-unknown-linux-gnu --recipe-path $HOME/recipe.json
+RUN     cargo chef cook --bin clo --profile minimal --target arm-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
+RUN     cargo chef cook --bin clo --profile minimal --target armv5te-unknown-linux-musleabi --no-default-features --recipe-path $HOME/recipe.json
+RUN     cargo chef cook --bin clo --profile minimal --target aarch64-unknown-linux-musl --no-default-features --recipe-path $HOME/recipe.json
 RUN     RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01" \
-        cargo chef cook --bin client --profile minimal --target x86_64-pc-windows-gnu --recipe-path $HOME/recipe.json
+        cargo chef cook --bin clo --profile minimal --target x86_64-pc-windows-gnu --recipe-path $HOME/recipe.json
 # Try to build with nightly for MIPS (little-endian)
 RUN     rustup component add rust-src --toolchain nightly && \
         RUSTFLAGS="-C target-feature=+crt-static -C linker=/usr/bin/mipsel-linux-gnu-gcc" \
         cargo +nightly chef cook \
-        --bin client \
+        --bin clo \
         --profile minimal \
         --target mipsel-unknown-linux-gnu \
         --no-default-features \
         -Z build-std=std,panic_abort,core,alloc \
-        -Z build-std-features=panic_immediate_abort \
         --recipe-path $HOME/recipe.json
 
 COPY    --chown=cloudpub:cloudpub . $HOME
@@ -98,23 +100,23 @@ ENV     PATH="$PATH:$HOME/bin"
 # Build client for all targets and create artifacts
 RUN     mkdir -p artifacts/win64 && \
         RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01" \
-        cargo build -p client --target x86_64-pc-windows-gnu --profile minimal && \
+        cargo build -p cloudpub-client --target x86_64-pc-windows-gnu --profile minimal && \
         cp target/x86_64-pc-windows-gnu/minimal/clo.exe artifacts/win64/clo.exe
 
 RUN     mkdir -p artifacts/x86_64 && \
-        cargo build -p client --target x86_64-unknown-linux-gnu --profile minimal && \
+        cargo build -p cloudpub-client --target x86_64-unknown-linux-gnu --profile minimal && \
         cp target/x86_64-unknown-linux-gnu/minimal/clo artifacts/x86_64/clo
 
 RUN     mkdir -p artifacts/aarch64 && \
-        cargo build -p client --target aarch64-unknown-linux-musl --profile minimal --no-default-features && \
+        cargo build -p cloudpub-client --target aarch64-unknown-linux-musl --profile minimal --no-default-features && \
         cp target/aarch64-unknown-linux-musl/minimal/clo artifacts/aarch64/clo
 
 RUN     mkdir -p artifacts/arm && \
-        cargo build -p client --target arm-unknown-linux-musleabi --profile minimal --no-default-features && \
+        cargo build -p cloudpub-client --target arm-unknown-linux-musleabi --profile minimal --no-default-features && \
         cp target/arm-unknown-linux-musleabi/minimal/clo artifacts/arm/clo
 
 RUN     mkdir -p artifacts/armv5te && \
-        cargo build -p client --target armv5te-unknown-linux-musleabi --profile minimal --no-default-features && \
+        cargo build -p cloudpub-client --target armv5te-unknown-linux-musleabi --profile minimal --no-default-features && \
         cp target/armv5te-unknown-linux-musleabi/minimal/clo artifacts/armv5te/clo
 
 # Build MIPS (little-endian) target with nightly toolchain and build-std
@@ -122,12 +124,11 @@ RUN     mkdir -p artifacts/mipsel && \
         rustup component add rust-src --toolchain nightly && \
         RUSTFLAGS="-C target-feature=+crt-static -C linker=/usr/bin/mipsel-linux-gnu-gcc" \
         cargo +nightly build \
-        -p client \
+        -p cloudpub-client \
         --target mipsel-unknown-linux-gnu \
         --profile minimal \
         --no-default-features \
         -Z build-std=std,panic_abort,core,alloc \
-        -Z build-std-features=panic_immediate_abort && \
         cp target/mipsel-unknown-linux-gnu/minimal/clo artifacts/mipsel/clo && \
         file artifacts/mipsel/clo
 

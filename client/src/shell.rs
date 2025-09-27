@@ -170,6 +170,8 @@ pub async fn execute(
 
     let progress1 = progress.clone();
     let template_clone = template.clone();
+    let last_stderr = Arc::new(RwLock::new(String::new()));
+    let last_stderr_clone = last_stderr.clone();
     tokio::spawn(async move {
         tokio::pin!(stdout_reader);
         tokio::pin!(stderr_reader);
@@ -196,6 +198,16 @@ pub async fn execute(
                 line = stderr_reader.next_line() => match line {
                     Ok(Some(line)) => {
                         warn!("STDERR: {}", line);
+                        {
+                            let mut last = last_stderr.write();
+                            if !last.is_empty() {
+                                *last += " ";
+                            }
+                            if (*last).len() > 2000 {
+                                *last = (*last).split_off(1000);
+                            }
+                            *last += &line;
+                        }
                         current += 1;
                         if let Some((message, tx, total)) = progress.as_ref() {
                             send_progress(message, &template_clone, *total, current, tx).await;
@@ -221,7 +233,7 @@ pub async fn execute(
                 if let Some((message, tx, total)) = progress.as_ref() {
                     send_progress(message, &template, *total, *total, tx).await;
                 }
-                bail!("{}: exit code {}", command.file_name().unwrap().to_string_lossy(), status.code().unwrap_or(-1));
+                bail!("{}: exit code {} ({})", command.file_name().unwrap().to_string_lossy(), status.code().unwrap_or(-1), *last_stderr_clone.read());
             }
         }
 

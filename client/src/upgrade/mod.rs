@@ -8,6 +8,28 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+// Include script templates at compile time
+#[cfg(unix)]
+const UNIX_SERVICE_UPDATE_SCRIPT: &str = include_str!("scripts/unix_service_update.sh");
+#[cfg(unix)]
+const UNIX_CLIENT_UPDATE_SCRIPT: &str = include_str!("scripts/unix_client_update.sh");
+#[cfg(windows)]
+const WINDOWS_SERVICE_UPDATE_SCRIPT: &str = include_str!("scripts/windows_service_update.bat");
+#[cfg(windows)]
+const WINDOWS_CLIENT_UPDATE_SCRIPT: &str = include_str!("scripts/windows_client_update.bat");
+#[cfg(windows)]
+const WINDOWS_MSI_INSTALL_SCRIPT: &str = include_str!("scripts/windows_msi_install.bat");
+#[cfg(target_os = "macos")]
+const MACOS_DMG_INSTALL_SCRIPT: &str = include_str!("scripts/macos_dmg_install.sh");
+#[cfg(target_os = "linux")]
+const LINUX_DEB_INSTALL_SCRIPT: &str = include_str!("scripts/linux_deb_install.sh");
+#[cfg(target_os = "linux")]
+const LINUX_RPM_INSTALL_SCRIPT: &str = include_str!("scripts/linux_rpm_install.sh");
+#[cfg(target_os = "linux")]
+const SYSTEMD_ONESHOT_TEMPLATE: &str = include_str!("scripts/systemd_oneshot.service");
+#[cfg(target_os = "macos")]
+const LAUNCHD_ONESHOT_TEMPLATE: &str = include_str!("scripts/launchd_oneshot.plist");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformDownloads {
     pub gui: Option<String>,
@@ -312,43 +334,233 @@ pub fn get_download_url(
     Ok(download_url.clone())
 }
 
-#[cfg(windows)]
-pub fn install_msi_package(msi_path: &std::path::Path) -> Result<()> {
-    use std::os::windows::process::CommandExt;
+/// Generic function to run a script with given template and replacements
+fn run_script(
+    script_name: &str,
+    script_template: &str,
+    replacements: Vec<(&str, String)>,
+    is_service: bool,
+) -> Result<()> {
+    use anyhow::Context;
+    use tracing::{debug, info};
 
-    let temp_dir = std::env::temp_dir();
-    let batch_script = temp_dir.join("cloudpub_install_msi.bat");
-    let current_exe = std::env::current_exe()?;
+    // Use cache directory for updates instead of temp
+    let cache_dir = get_cache_dir("updates")?;
+    std::fs::create_dir_all(&cache_dir).context("Failed to create updates cache directory")?;
 
-    let script_content = format!(
-        r#"@echo off
-timeout /t 3 /nobreak >nul
-echo Installing MSI package...
-echo Requesting administrator privileges...
-powershell -Command "Start-Process msiexec -ArgumentList '/i', '{}', '/quiet', '/norestart' -Verb RunAs -Wait"
-if errorlevel 1 (
-    echo Failed to install MSI package
-    exit /b 1
-)
-echo Installation completed successfully
-del "%~f0"
-start "" "{}"
-"#,
-        msi_path.display(),
-        current_exe.display()
+    let timestamp = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     );
 
-    std::fs::write(&batch_script, script_content)
-        .context("Failed to create MSI install batch script")?;
+    #[cfg(windows)]
+    let script_path = cache_dir.join(format!("{}_{}.bat", script_name, timestamp));
+    #[cfg(unix)]
+    let script_path = cache_dir.join(format!("{}_{}.sh", script_name, timestamp));
 
-    // Execute the batch script and exit current process
-    std::process::Command::new("cmd")
-        .args(&["/C", &batch_script.to_string_lossy()])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-        .context("Failed to execute MSI install batch script")?;
+    debug!("Creating script: {}", script_path.display());
 
+    // Apply all replacements to the template
+    let mut script_content = script_template.to_string();
+    for (placeholder, value) in replacements {
+        script_content = script_content.replace(placeholder, &value);
+    }
+
+    std::fs::write(&script_path, script_content).context("Failed to create script")?;
+
+    info!("Script created at: {}", script_path.display());
+
+    // Always make script executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Execute the script
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(&["/C", &script_path.to_string_lossy()])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .spawn()
+            .context("Failed to execute script")?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if is_service {
+            // Use systemd one-shot service for service updates
+            let service_name = format!("cloudpub-upgrade-{}.service", timestamp);
+            let service_path = format!("/etc/systemd/system/{}", service_name);
+
+            debug!("Creating systemd one-shot service: {}", service_name);
+
+            let service_content = SYSTEMD_ONESHOT_TEMPLATE
+                .replace("{TIMESTAMP}", &timestamp)
+                .replace("{SCRIPT_PATH}", &script_path.display().to_string());
+
+            std::fs::write(&service_path, service_content)
+                .context("Failed to create systemd one-shot service")?;
+
+            std::process::Command::new("systemctl")
+                .arg("daemon-reload")
+                .output()
+                .context("Failed to reload systemd")?;
+
+            std::process::Command::new("systemctl")
+                .arg("start")
+                .arg(&service_name)
+                .spawn()
+                .context("Failed to start upgrade service")?;
+
+            info!(
+                "Upgrade scheduled via systemd one-shot service: {}",
+                service_name
+            );
+        } else {
+            // Use nohup for regular executable updates
+            debug!("Executing script with nohup: {}", script_path.display());
+
+            std::process::Command::new("nohup")
+                .arg("/bin/bash")
+                .arg(&script_path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .context("Failed to spawn script with nohup")?;
+
+            info!("Script spawned with nohup");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if is_service {
+            // Use launchd one-shot job for service updates
+            let plist_name = format!("com.cloudpub.upgrade.{}.plist", timestamp);
+            let plist_path = format!("/Library/LaunchDaemons/{}", plist_name);
+
+            debug!("Creating launchd one-shot job: {}", plist_name);
+
+            let plist_content = LAUNCHD_ONESHOT_TEMPLATE
+                .replace("{TIMESTAMP}", &timestamp)
+                .replace("{SCRIPT_PATH}", &script_path.display().to_string());
+
+            std::fs::write(&plist_path, plist_content)
+                .context("Failed to create launchd one-shot plist")?;
+
+            std::process::Command::new("chmod")
+                .args(["644", &plist_path])
+                .output()
+                .context("Failed to set plist permissions")?;
+
+            std::process::Command::new("launchctl")
+                .args(["load", &plist_path])
+                .spawn()
+                .context("Failed to load upgrade job")?;
+
+            info!("Upgrade scheduled via launchd one-shot job: {}", plist_name);
+        } else {
+            // Use nohup for regular executable updates
+            debug!("Executing script with nohup: {}", script_path.display());
+
+            std::process::Command::new("nohup")
+                .arg("/bin/bash")
+                .arg(&script_path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .context("Failed to spawn script with nohup")?;
+
+            info!("Script spawned with nohup");
+        }
+    }
+
+    info!("Script execution initiated, exiting current process");
     std::process::exit(0);
+}
+
+/// Run an upgrade script with logging support
+fn run_upgrade_script(
+    script_template: &str,
+    new_exe_path: &std::path::Path,
+    current_args: Vec<String>,
+    is_service: bool,
+) -> Result<()> {
+    use tracing::debug;
+
+    let current_exe = std::env::current_exe()?;
+    let cache_dir = get_cache_dir("updates")?;
+    std::fs::create_dir_all(&cache_dir).context("Failed to create updates cache directory")?;
+
+    let timestamp = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+
+    let log_file = cache_dir.join(format!("cloudpub_update_{}.log", timestamp));
+
+    debug!("Starting update process");
+    debug!("Current executable: {}", current_exe.display());
+    debug!("New executable: {}", new_exe_path.display());
+    debug!("Current args: {:?}", current_args);
+    debug!("Log file location: {}", log_file.display());
+    debug!("Is service: {}", is_service);
+
+    // Extract config path for service mode
+    // Note: The actual flag used is --conf, not --config
+    let config_path = if is_service {
+        current_args
+            .windows(2)
+            .find(|w| w[0] == "--conf" || w[0] == "--config")
+            .and_then(|w| w.get(1))
+            .map(|s| s.as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        String::new()
+    };
+
+    // Always provide all replacements - unused ones will be ignored
+    let replacements = vec![
+        ("{LOG_FILE}", log_file.display().to_string()),
+        ("{NEW_EXE}", new_exe_path.display().to_string()),
+        ("{CURRENT_EXE}", current_exe.display().to_string()),
+        ("{ARGS}", current_args.join(" ")),
+        ("{CONFIG_PATH}", config_path),
+        ("{SERVICE_ARGS}", current_args.join(" ")),
+    ];
+
+    run_script("cloudpub_update", script_template, replacements, is_service)
+}
+
+#[cfg(windows)]
+pub fn install_msi_package(msi_path: &std::path::Path) -> Result<()> {
+    let current_exe = std::env::current_exe()?;
+
+    run_script(
+        "cloudpub_install_msi",
+        WINDOWS_MSI_INSTALL_SCRIPT,
+        vec![
+            ("{MSI_PATH}", msi_path.display().to_string()),
+            ("{CURRENT_EXE}", current_exe.display().to_string()),
+        ],
+        false,
+    )
 }
 
 #[cfg(windows)]
@@ -356,40 +568,13 @@ pub fn replace_and_restart_windows(
     new_exe_path: &std::path::Path,
     current_args: Vec<String>,
 ) -> Result<()> {
-    use std::os::windows::process::CommandExt;
-
-    let current_exe = std::env::current_exe()?;
-    let temp_dir = std::env::temp_dir();
-    let batch_script = temp_dir.join("cloudpub_update.bat");
-
-    let script_content = format!(
-        r#"@echo off
-timeout /t 3 /nobreak >nul
-move /y "{}" "{}"
-if errorlevel 1 (
-    echo Failed to replace executable
-    exit /b 1
-)
-start "" "{}" {}
-del "%~f0"
-"#,
-        new_exe_path.display(),
-        current_exe.display(),
-        current_exe.display(),
-        current_args.join(" ")
-    );
-
-    std::fs::write(&batch_script, script_content)
-        .context("Failed to create update batch script")?;
-
-    // Execute the batch script and exit current process
-    std::process::Command::new("cmd")
-        .args(&["/C", &batch_script.to_string_lossy()])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-        .context("Failed to execute update batch script")?;
-
-    std::process::exit(0);
+    let is_service = current_args.contains(&"--run-as-service".to_string());
+    let script_template = if is_service {
+        WINDOWS_SERVICE_UPDATE_SCRIPT
+    } else {
+        WINDOWS_CLIENT_UPDATE_SCRIPT
+    };
+    run_upgrade_script(script_template, new_exe_path, current_args, is_service)
 }
 
 #[cfg(not(windows))]
@@ -397,39 +582,18 @@ pub fn replace_and_restart_unix(
     new_exe_path: &std::path::Path,
     current_args: Vec<String>,
 ) -> Result<()> {
-    let current_exe = std::env::current_exe()?;
-    let backup_exe = current_exe.with_extension("old");
-
-    // Move current executable to backup (this works even if it's running)
-    std::fs::rename(&current_exe, &backup_exe).context("Failed to backup current executable")?;
-
-    // Move new executable to current location (atomic operation)
-    std::fs::rename(new_exe_path, &current_exe).context("Failed to move new executable")?;
-
-    // Set executable permissions
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&current_exe)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&current_exe, perms)?;
-    }
-
-    // Clean up backup file (optional, ignore errors)
-    std::fs::remove_file(&backup_exe).ok();
-
-    // Restart the application
-    std::process::Command::new(&current_exe)
-        .args(current_args)
-        .spawn()
-        .context("Failed to restart application")?;
-
-    std::process::exit(0);
+    let is_service = current_args.contains(&"--run-as-service".to_string());
+    let script_template = if is_service {
+        UNIX_SERVICE_UPDATE_SCRIPT
+    } else {
+        UNIX_CLIENT_UPDATE_SCRIPT
+    };
+    run_upgrade_script(script_template, new_exe_path, current_args, is_service)
 }
 
 pub fn apply_update_and_restart(new_exe_path: &std::path::Path) -> Result<()> {
     // Get current command line arguments (skip the program name)
-    let args: Vec<String> = vec!["run".to_string()];
+    let args: Vec<String> = std::env::args().skip(1).collect();
 
     eprintln!("{}", crate::t!("applying-update"));
 
@@ -446,225 +610,57 @@ pub fn apply_update_and_restart(new_exe_path: &std::path::Path) -> Result<()> {
 async fn install_dmg_package(package_path: &std::path::Path) -> Result<()> {
     eprintln!("Installing DMG package...");
 
-    // Get current executable and args for restart
     let current_exe = std::env::current_exe()?;
     let current_args: Vec<String> = std::env::args().skip(1).collect();
-    let temp_dir = std::env::temp_dir();
-    let install_script = temp_dir.join("cloudpub_install_dmg.sh");
 
-    let script_content = format!(
-        r#"#!/bin/bash
-set -e
-
-PACKAGE_PATH="{}"
-CURRENT_EXE="{}"
-CURRENT_ARGS="{}"
-
-echo "Installing DMG package..."
-
-# Mount the DMG
-MOUNT_OUTPUT=$(hdiutil attach -nobrowse -quiet "$PACKAGE_PATH")
-if [ $? -ne 0 ]; then
-    echo "Failed to mount DMG package"
-    exit 1
-fi
-
-# Extract mount point
-MOUNT_POINT=$(echo "$MOUNT_OUTPUT" | grep "/Volumes/" | awk '{{print $NF}}')
-if [ -z "$MOUNT_POINT" ]; then
-    echo "Could not find mount point"
-    exit 1
-fi
-
-# Find .app bundle
-APP_PATH=$(find "$MOUNT_POINT" -name "*.app" -type d | head -n 1)
-if [ -z "$APP_PATH" ]; then
-    hdiutil detach "$MOUNT_POINT" -quiet
-    echo "No .app bundle found in DMG"
-    exit 1
-fi
-
-APP_NAME=$(basename "$APP_PATH")
-DESTINATION="/Applications/$APP_NAME"
-
-# Remove existing app if it exists
-if [ -d "$DESTINATION" ]; then
-    rm -rf "$DESTINATION"
-fi
-
-# Copy app to Applications
-cp -R "$APP_PATH" "/Applications/"
-if [ $? -ne 0 ]; then
-    hdiutil detach "$MOUNT_POINT" -quiet
-    echo "Failed to copy application"
-    exit 1
-fi
-
-# Unmount DMG
-hdiutil detach "$MOUNT_POINT" -quiet
-
-echo "DMG package installed successfully"
-
-# Launch new version
-APP_NAME_NO_EXT=$(basename "$APP_NAME" .app)
-open -a "$APP_NAME_NO_EXT"
-echo "Launched new application version"
-
-# Clean up script
-rm -f "$0"
-"#,
-        package_path.display(),
-        current_exe.display(),
-        current_args.join(" ")
-    );
-
-    std::fs::write(&install_script, script_content)?;
-
-    // Make script executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&install_script)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&install_script, perms)?;
-    }
-
-    // Execute install script in background
-    std::process::Command::new("nohup")
-        .arg(&install_script)
-        .spawn()?;
-
-    std::process::exit(0);
+    run_script(
+        "cloudpub_install_dmg",
+        MACOS_DMG_INSTALL_SCRIPT,
+        vec![
+            ("{PACKAGE_PATH}", package_path.display().to_string()),
+            ("{CURRENT_EXE}", current_exe.display().to_string()),
+            ("{CURRENT_ARGS}", current_args.join(" ")),
+        ],
+        false,
+    )
 }
 
 #[cfg(target_os = "linux")]
 async fn install_deb_package(package_path: &std::path::Path) -> Result<()> {
     eprintln!("Installing DEB package...");
 
-    // Get current executable and args for restart
     let current_exe = std::env::current_exe()?;
     let current_args: Vec<String> = std::env::args().skip(1).collect();
-    let temp_dir = std::env::temp_dir();
-    let install_script = temp_dir.join("cloudpub_install_deb.sh");
 
-    let script_content = format!(
-        r#"#!/bin/bash
-set -e
-
-PACKAGE_PATH="{}"
-CURRENT_EXE="{}"
-CURRENT_ARGS="{}"
-
-echo "Installing DEB package..."
-
-# Check if running as root, if not use pkexec
-if [ "$EUID" -ne 0 ]; then
-    echo "Root privileges required for package installation"
-    pkexec dpkg -i "$PACKAGE_PATH"
-else
-    dpkg -i "$PACKAGE_PATH"
-fi
-
-if [ $? -ne 0 ]; then
-    echo "Failed to install DEB package"
-    exit 1
-fi
-
-echo "DEB package installed successfully"
-
-# Wait a moment for the process to exit
-sleep 3
-
-# Restart the application
-exec "$CURRENT_EXE" $CURRENT_ARGS
-"#,
-        package_path.display(),
-        current_exe.display(),
-        current_args.join(" ")
-    );
-
-    std::fs::write(&install_script, script_content)?;
-
-    // Make script executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&install_script)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&install_script, perms)?;
-    }
-
-    // Execute install script in background
-    std::process::Command::new("nohup")
-        .arg(&install_script)
-        .spawn()?;
-
-    std::process::exit(0);
+    run_script(
+        "cloudpub_install_deb",
+        LINUX_DEB_INSTALL_SCRIPT,
+        vec![
+            ("{PACKAGE_PATH}", package_path.display().to_string()),
+            ("{CURRENT_EXE}", current_exe.display().to_string()),
+            ("{CURRENT_ARGS}", current_args.join(" ")),
+        ],
+        false,
+    )
 }
 
 #[cfg(target_os = "linux")]
 async fn install_rpm_package(package_path: &std::path::Path) -> Result<()> {
     eprintln!("Installing RPM package...");
 
-    // Get current executable and args for restart
     let current_exe = std::env::current_exe()?;
     let current_args: Vec<String> = std::env::args().skip(1).collect();
-    let temp_dir = std::env::temp_dir();
-    let install_script = temp_dir.join("cloudpub_install_rpm.sh");
 
-    let script_content = format!(
-        r#"#!/bin/bash
-set -e
-
-PACKAGE_PATH="{}"
-CURRENT_EXE="{}"
-CURRENT_ARGS="{}"
-
-echo "Installing RPM package..."
-
-# Check if running as root, if not use pkexec
-if [ "$EUID" -ne 0 ]; then
-    echo "Root privileges required for package installation"
-    pkexec rpm -Uvh "$PACKAGE_PATH"
-else
-    rpm -Uvh "$PACKAGE_PATH"
-fi
-
-if [ $? -ne 0 ]; then
-    echo "Failed to install RPM package"
-    exit 1
-fi
-
-echo "RPM package installed successfully"
-
-# Wait a moment for the process to exit
-sleep 3
-
-# Restart the application
-exec "$CURRENT_EXE" $CURRENT_ARGS
-"#,
-        package_path.display(),
-        current_exe.display(),
-        current_args.join(" ")
-    );
-
-    std::fs::write(&install_script, script_content)?;
-
-    // Make script executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&install_script)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&install_script, perms)?;
-    }
-
-    // Execute install script in background
-    std::process::Command::new("nohup")
-        .arg(&install_script)
-        .spawn()?;
-
-    std::process::exit(0);
+    run_script(
+        "cloudpub_install_rpm",
+        LINUX_RPM_INSTALL_SCRIPT,
+        vec![
+            ("{PACKAGE_PATH}", package_path.display().to_string()),
+            ("{CURRENT_EXE}", current_exe.display().to_string()),
+            ("{CURRENT_ARGS}", current_args.join(" ")),
+        ],
+        false,
+    )
 }
 
 async fn handle_cli_update(
@@ -749,7 +745,8 @@ pub async fn handle_upgrade_download(
 
     // Use base URL from config server field
     let base_url = config.read().server.to_string();
-    let download_url = get_download_url(&base_url, &download_type, version, "stable")?;
+    let download_url =
+        get_download_url(&base_url, &download_type, version, cloudpub_common::BRANCH)?;
 
     // Extract file extension from download URL
     let mut file_extension = std::path::Path::new(&download_url)
@@ -777,7 +774,7 @@ pub async fn handle_upgrade_download(
         result_tx,
     )
     .await
-    .context("Failed to download update")?;
+    .with_context(|| format!("Failed to download update ({})", download_url))?;
 
     eprintln!(
         "{}",

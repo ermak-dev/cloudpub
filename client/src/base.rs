@@ -2,7 +2,7 @@ use crate::client::run_client;
 use crate::commands::{Commands, ServiceAction};
 pub use crate::config::{ClientConfig, ClientOpts};
 use crate::ping;
-use crate::service::{create_service_manager, ServiceConfig, ServiceStatus};
+use crate::service::{create_service_manager, ServiceStatus};
 use crate::shell::get_cache_dir;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
@@ -18,8 +18,8 @@ use futures::future::FutureExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::env;
 use std::io::{self, IsTerminal, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
@@ -42,43 +42,54 @@ pub struct Cli {
 }
 
 fn handle_service_command(action: &ServiceAction, config: &ClientConfig) -> Result<()> {
-    // Get the current executable path
-    let exe_path = env::current_exe().context("Failed to get current executable path")?;
-
-    // Prepare config file argument
-    let mut args = Vec::new();
-    if let Some(path_str) = config.get_config_path().to_str() {
-        args.push("--conf".to_string());
-        args.push(path_str.to_string());
-    }
-
-    // Add the run command for the service
-    args.push("run".to_string());
-
-    // On Windows, add the service flag
-    #[cfg(target_os = "windows")]
-    {
-        args.push("--run-as-service".to_string());
-    }
-
-    // Create service configuration
-    let service_config = ServiceConfig {
-        #[cfg(target_os = "macos")]
-        name: "ru.cloudpub.clo".to_string(),
-        #[cfg(not(target_os = "macos"))]
-        name: "cloudpub".to_string(),
-        display_name: "CloudPub Client".to_string(),
-        description: "CloudPub Client Service".to_string(),
-        executable_path: exe_path,
-        args,
-        config_path: Some(config.get_config_path().to_owned()),
+    // Determine config path to use for service
+    let config_path = match action {
+        ServiceAction::Install { conf: Some(path) } => {
+            // Use provided config path
+            PathBuf::from(path)
+        }
+        _ => {
+            // Use default config path
+            config.get_config_path().to_owned()
+        }
     };
 
+    // Check if the provided config path exists
+    let actual_config = if config.token.is_some() {
+        debug!("Service config has token: {:?}", config_path);
+        config_path.clone()
+    } else {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            use crate::service::ServiceConfig;
+            // On Unix, check if running under sudo and use original user's config if available
+            if let Some(sudo_config) = ServiceConfig::get_sudo_user_config_path() {
+                sudo_config.clone()
+            } else {
+                config_path.clone()
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        config_path.clone()
+    };
+
+    if actual_config.as_os_str().is_empty() || !actual_config.exists() {
+        bail!("Конфигурационный файл не найден ({:?}). Пожалуйста, укажите правильный путь к конфигурационному файлу с помощью параметра --config", config_path);
+    }
+
+    let cfg = ClientConfig::from_file(&actual_config, true).context(format!(
+        "Не удалось загрузить конфигурацию из файла: {:?}",
+        actual_config
+    ))?;
+
+    if cfg.token.is_none() {
+        bail!("В конфигурации отсутствует токен аутентификации. Пожалуйста, войдите в систему с помощью команды 'clo login' перед установкой службы.");
+    }
     // Create the appropriate service manager for the current platform
-    let service_manager = create_service_manager(service_config);
+    let service_manager = create_service_manager(actual_config);
 
     match action {
-        ServiceAction::Install => {
+        ServiceAction::Install { .. } => {
             service_manager.install()?;
             println!("{}", crate::t!("service-installed"));
         }
@@ -265,7 +276,10 @@ pub async fn main_loop(
             true
         }
 
-        Commands::Run => false,
+        Commands::Run { run_as_service } => {
+            opts.is_service = *run_as_service;
+            false
+        }
 
         Commands::Unpublish(_)
         | Commands::Start(_)
@@ -322,7 +336,7 @@ pub async fn main_loop(
                         .await
                         .context("Failed to send upgrade message")?;
                 }
-                Commands::Run | Commands::Publish(_) => {
+                Commands::Run { .. } | Commands::Publish(_) => {
                     write_stderr(crate::t!("upgrade-available", "version" => info.version.clone()));
                 }
                 _ => {}
@@ -351,7 +365,7 @@ pub async fn main_loop(
                             );
                             break;
                         }
-                        Commands::Publish(_) | Commands::Run => {
+                        Commands::Publish(_) | Commands::Run { .. } => {
                             if endpoint.error.is_empty() {
                                 write_stdout(
                                     crate::t!("service-published", "endpoint" => endpoint.to_string()),
@@ -402,7 +416,7 @@ pub async fn main_loop(
                                 .send(Message::EndpointClear(EndpointClear {}))
                                 .await?;
                         }
-                        Commands::Run => {
+                        Commands::Run { .. } => {
                             command_tx
                                 .send(Message::EndpointStartAll(EndpointStartAll {}))
                                 .await?;
@@ -511,14 +525,14 @@ pub async fn main_loop(
                     }
                     write_stdout(output);
                 }
-                if !matches!(cli.command, Commands::Run) {
+                if !matches!(cli.command, Commands::Run { .. }) {
                     break;
                 }
             }
 
             Message::EndpointClearAck(_) => {
                 write_stdout(crate::t!("all-services-removed"));
-                if !matches!(cli.command, Commands::Run) {
+                if !matches!(cli.command, Commands::Run { .. }) {
                     break;
                 }
             }

@@ -16,7 +16,7 @@ pip install cloudpub-python-sdk
 
 ## Документация
 
-- [Python SDK](https://cloudpub.ru/docs/python-sdk)
+- [Python SDK](https://cloudpub.ru/docs/python-sdk/index.html)
 
 ## License
 

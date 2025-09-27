@@ -12,9 +12,11 @@ CloudPub обеспечивает безопасный удаленный дос
 
 Для пользователей Home Assistant OS доступен неофициальный add-on CloudPub, который упрощает настройку удаленного доступа. Add-on автоматически настраивает туннель и интегрируется с Home Assistant.
 
-**Важно:** Данный add-on является неофициальным и не связан с CloudPub.
+:::warning
+Данный add-on является неофициальным и не связан с CloudPub.
+:::
 
-[CloudPub Add-on для Home Assistant (неофициальный)](https://github.com/black-roland/hassio-addon-cloudpub/tree/master/cloudpub)
+[CloudPub Add-on для Home Assistant (неофициальный)](https://github.com/black-roland/hassio-addon-cloudpub)
 
 ## Home Assistant Docker Compose
 
