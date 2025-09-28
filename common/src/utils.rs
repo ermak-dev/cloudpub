@@ -139,7 +139,6 @@ pub fn get_platform() -> String {
     let platform = "macos-x86_64".to_string();
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     let platform = "macos-aarch64".to_string();
-    // armeabi-v7a, arm64-v8a, x86, x86_64
     #[cfg(all(target_os = "android", target_arch = "arm"))]
     let platform = "android-armv7".to_string();
     #[cfg(all(target_os = "android", target_arch = "aarch64"))]
