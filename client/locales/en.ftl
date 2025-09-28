@@ -35,6 +35,7 @@ error-creating-eula-file = Error creating eula.txt file
 error-reading-server-properties = Error reading server.properties
 error-writing-server-properties = Error writing server.properties
 error-getting-java-path = Error getting path to java
+error-getting-java-path-termux = Error getting path to java. Please install it manually: `apt install openjdk-21`
 
 # Error contexts
 error-downloading-webserver = Error downloading web server

@@ -30,10 +30,6 @@ const JDK_URL: &str =
 #[cfg(target_os = "macos")]
 const JDK_URL: &str = "https://download.java.net/java/GA/jdk23/3c5b90190c68498b986a97f276efd28a/37/GPL/openjdk-23_macos-x64_bin.tar.gz";
 
-#[cfg(target_os = "android")] // TODO
-const JDK_URL: &str =
-    "";
-
 // Minecraft server 1.21.8
 const MINECRAFT_SERVER_URL: &str =
     "https://piston-data.mojang.com/v1/objects/6bce4ef400e4efaa63a13d5e6f6b500be969ef81/server.jar";
@@ -43,9 +39,14 @@ const MINECRAFT_SERVER_CFG: &str = include_str!("server.properties");
 pub const JDK_SUBDIR: &str = "jdk";
 pub const DOWNLOAD_SUBDIR: &str = "download";
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 fn get_java() -> Result<PathBuf> {
     Ok(get_cache_dir(JDK_SUBDIR)?.join("bin").join("java"))
+}
+
+#[cfg(target_os = "android")]
+fn get_java() -> Result<PathBuf> {
+    Ok(which::which("java")?)
 }
 
 #[cfg(target_os = "macos")]
@@ -75,59 +76,71 @@ impl Plugin for MinecraftPlugin {
 
         let download_dir = get_cache_dir(DOWNLOAD_SUBDIR)?;
         let jdk_dir = get_cache_dir(JDK_SUBDIR)?;
-        let jdk_filename = JDK_URL.split('/').next_back().unwrap();
-        let jdk_file = download_dir.join(jdk_filename);
-
         let minecraft_file = download_dir.join("server.jar");
-
         let mut touch = jdk_dir.clone();
-        touch.push("installed.txt");
 
-        if touch.exists() {
-            return Ok(());
+        #[cfg(not(target_os = "android"))]
+        {
+            
+            let jdk_filename = JDK_URL.split('/').next_back().unwrap();
+            let jdk_file = download_dir.join(jdk_filename);
+
+            touch.push("installed.txt");
+
+            if touch.exists() {
+                return Ok(());
+            }
+
+            download(
+                &crate::t!("downloading-jdk"),
+                config.clone(),
+                JDK_URL,
+                &jdk_file,
+                command_rx,
+                result_tx,
+            )
+            .await
+            .context(crate::t!("error-downloading-jdk"))?;
+
+            #[cfg(unix)]
+            execute(
+                "tar".into(),
+                vec![
+                    "xvf".to_string(),
+                    jdk_file.to_str().unwrap().to_string(),
+                    "-C".to_string(),
+                    jdk_dir.to_str().unwrap().to_string(),
+                    #[cfg(target_os = "macos")]
+                    "--strip-components=3".to_string(),
+                    #[cfg(not(target_os = "macos"))]
+                    "--strip-components=1".to_string(),
+                ],
+                None,
+                Default::default(),
+                Some((crate::t!("installing-jdk"), result_tx.clone(), 450)),
+                command_rx,
+            )
+            .await?;
+
+            #[cfg(target_os = "windows")]
+            unzip(
+                &crate::t!("installing-jdk"),
+                &jdk_file,
+                &jdk_dir,
+                1,
+                result_tx,
+            )
+            .await
+            .context(crate::t!("error-unpacking-jdk"))?;
         }
 
-        download(
-            &crate::t!("downloading-jdk"),
-            config.clone(),
-            JDK_URL,
-            &jdk_file,
-            command_rx,
-            result_tx,
-        )
-        .await
-        .context(crate::t!("error-downloading-jdk"))?;
-
-        #[cfg(unix)]
-        execute(
-            "tar".into(),
-            vec![
-                "xvf".to_string(),
-                jdk_file.to_str().unwrap().to_string(),
-                "-C".to_string(),
-                jdk_dir.to_str().unwrap().to_string(),
-                #[cfg(target_os = "macos")]
-                "--strip-components=3".to_string(),
-                #[cfg(not(target_os = "macos"))]
-                "--strip-components=1".to_string(),
-            ],
-            None,
-            Default::default(),
-            Some((crate::t!("installing-jdk"), result_tx.clone(), 450)),
-            command_rx,
-        )
-        .await?;
-
-        #[cfg(target_os = "windows")]
-        unzip(
-            &crate::t!("installing-jdk"),
-            &jdk_file,
-            &jdk_dir,
-            1,
-            result_tx,
-        )
-        .await
-        .context(crate::t!("error-unpacking-jdk"))?;
+        #[cfg(target_os = "android")]
+        {
+            match get_java() {
+                Ok(_) => (),
+                Err(_) => bail!(crate::t!("error-getting-java-path-termux"))
+            }
+        }
 
         let minecraft_jar = config
             .read()
@@ -159,6 +172,8 @@ impl Plugin for MinecraftPlugin {
         } else {
             bail!(crate::t!("error-invalid-minecraft-path", "path" => minecraft_jar));
         }
+
+        #[cfg(not(target_os = "android"))]
         std::fs::write(touch, "Delete to reinstall").context(crate::t!("error-creating-marker"))?;
 
         Ok(())

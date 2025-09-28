@@ -67,7 +67,8 @@ impl ServiceConfig {
         }
         #[cfg(target_os = "android")]
         {
-            PathBuf::from("/data/data/com.termux/files/home/.config/cloudpub/client.toml")
+            // Service running for Android is not supported
+            unreachable!()
         }
     }
 

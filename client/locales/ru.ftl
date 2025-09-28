@@ -35,6 +35,7 @@ error-creating-eula-file = Ошибка создания файла eula.txt
 error-reading-server-properties = Ошибка чтения server.properties
 error-writing-server-properties = Ошибка записи server.properties
 error-getting-java-path = Ошибка получения пути к java
+error-getting-java-path-termux = Ошибка получения пути к java. Пожалуйста, установите пакет самостоятельно: `apt install openjdk-21`
 
 # Error contexts
 error-downloading-webserver = Ошибка загрузки веб сервера
