@@ -81,7 +81,6 @@ impl Plugin for MinecraftPlugin {
 
         #[cfg(not(target_os = "android"))]
         {
-            
             let jdk_filename = JDK_URL.split('/').next_back().unwrap();
             let jdk_file = download_dir.join(jdk_filename);
 
@@ -138,7 +137,7 @@ impl Plugin for MinecraftPlugin {
         {
             match get_java() {
                 Ok(_) => (),
-                Err(_) => bail!(crate::t!("error-getting-java-path-termux"))
+                Err(_) => bail!(crate::t!("error-getting-java-path-termux")),
             }
         }
 
