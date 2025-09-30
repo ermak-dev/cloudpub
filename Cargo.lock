@@ -427,7 +427,8 @@ dependencies = [
  "hostname",
  "indicatif",
  "lazy_static",
- "machineid-rs",
+ "machineid-rs 1.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "machineid-rs 1.2.4 (git+https://github.com/Taptiive/machineid-rs?rev=refs%2Fpull%2F33%2Fhead)",
  "nix",
  "parking_lot",
  "regex",
@@ -442,6 +443,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "which",
  "windows-service",
  "winreg 0.55.0",
  "x509-parser",
@@ -775,6 +777,12 @@ name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
+
+[[package]]
+name = "env_home"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
 
 [[package]]
 name = "equivalent"
@@ -1578,6 +1586,25 @@ name = "machineid-rs"
 version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35ceb4d434d69d7199abc3036541ba6ef86767a4356e3077d5a3419f85b70b14"
+dependencies = [
+ "hex",
+ "hmac",
+ "md-5",
+ "serde",
+ "serde_json",
+ "sha-1",
+ "sha2",
+ "sysinfo",
+ "uuid",
+ "whoami",
+ "winreg 0.11.0",
+ "wmi",
+]
+
+[[package]]
+name = "machineid-rs"
+version = "1.2.4"
+source = "git+https://github.com/Taptiive/machineid-rs?rev=refs%2Fpull%2F33%2Fhead#e75f6eb15fea2cbad35cd2434d6c4d941de369af"
 dependencies = [
  "hex",
  "hmac",
@@ -3334,6 +3361,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "which"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
+dependencies = [
+ "env_home",
+ "rustix",
+ "winsafe",
+]
+
+[[package]]
 name = "whoami"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3737,6 +3775,12 @@ dependencies = [
  "cfg-if",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"

@@ -35,6 +35,7 @@ error-creating-eula-file = Ошибка создания файла eula.txt
 error-reading-server-properties = Ошибка чтения server.properties
 error-writing-server-properties = Ошибка записи server.properties
 error-getting-java-path = Ошибка получения пути к java
+error-getting-java-path-termux = Ошибка получения пути к java. Пожалуйста, установите пакет самостоятельно: `apt install openjdk-21`
 
 # Error contexts
 error-downloading-webserver = Ошибка загрузки веб сервера
@@ -45,6 +46,7 @@ error-setting-permissions = Ошибка установки прав на исп
 error-creating-marker = Ошибка создания файла метки
 error-writing-httpd-conf = Ошибка записи httpd.conf
 error-start-server = Не удалось запустить сервер за 60 секунд. Проверьте логи сервера.
+error-getting-httpd-path-termux = Ошибка получения пуи к httpd. Пожалуйста, установите пакет самостоятельно: `apt install apache2`
 
 # Service messages
 service-published = Сервис опубликован: {$endpoint}

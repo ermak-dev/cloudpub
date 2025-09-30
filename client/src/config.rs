@@ -9,6 +9,8 @@ use crate::options::ConfigOption;
 pub use cloudpub_common::config::{MaskedString, TransportConfig};
 use lazy_static::lazy_static;
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
+#[cfg(target_os = "android")]
+use machineid_rs_termux as machineid_rs;
 use std::collections::HashMap;
 use std::fs::{self, create_dir_all, File};
 use std::io::Write;
@@ -80,6 +82,15 @@ lazy_static! {
             EnvConfig {
                 home_1c: PathBuf::from("/Applications/1C"),
                 httpd: "httpd-2.4.62-macos.zip".to_string(),
+                httpd_dir: "httpd-x64".to_string(),
+            },
+        );
+        #[cfg(target_os = "android")]
+        m.insert(
+            Platform::X64,
+            EnvConfig {
+                home_1c: PathBuf::from("/data/data/com.termux/files/home/opt/1C"),
+                httpd: "".to_string(), // TODO
                 httpd_dir: "httpd-x64".to_string(),
             },
         );
