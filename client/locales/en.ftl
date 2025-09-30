@@ -46,6 +46,7 @@ error-setting-permissions = Error setting execution permissions
 error-creating-marker = Error creating marker file
 error-writing-httpd-conf = Error writing httpd.conf
 error-start-server = Failed to start server within 60 seconds. Please check server logs.
+error-getting-httpd-path-termux = Error getting path to httpd. Please install it manually: `apt install apache2`
 
 # Service messages
 service-published = Service published: {$endpoint}

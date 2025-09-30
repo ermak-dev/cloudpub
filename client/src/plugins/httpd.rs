@@ -78,36 +78,42 @@ pub async fn setup_httpd(
     let cache_dir = get_cache_dir(DOWNLOAD_SUBDIR)?;
     let httpd_dir = get_cache_dir(&env.httpd_dir)?;
 
-    let mut touch = httpd_dir.clone();
-    touch.push("installed.txt");
+    #[cfg(not(target_os = "android"))]
+    {
+        let mut touch = httpd_dir.clone();
+        touch.push("installed.txt");
 
-    if touch.exists() {
-        return Ok(());
+        if touch.exists() {
+            return Ok(());
+        }
+
+        let mut httpd = cache_dir.clone();
+        httpd.push(env.httpd.clone());
+
+        download(
+            &crate::t!("downloading-webserver"),
+            config.clone(),
+            format!("{}download/{}", config.read().server, env.httpd).as_str(),
+            &httpd,
+            command_rx,
+            result_tx,
+        )
+        .await
+        .context(crate::t!("error-downloading-webserver"))?;
+
+        unzip(
+            &crate::t!("unpacking-webserver"),
+            &httpd,
+            &httpd_dir,
+            1,
+            result_tx,
+        )
+        .await
+        .context(crate::t!("error-unpacking-webserver"))?;
     }
 
-    let mut httpd = cache_dir.clone();
-    httpd.push(env.httpd.clone());
-
-    download(
-        &crate::t!("downloading-webserver"),
-        config.clone(),
-        format!("{}download/{}", config.read().server, env.httpd).as_str(),
-        &httpd,
-        command_rx,
-        result_tx,
-    )
-    .await
-    .context(crate::t!("error-downloading-webserver"))?;
-
-    unzip(
-        &crate::t!("unpacking-webserver"),
-        &httpd,
-        &httpd_dir,
-        1,
-        result_tx,
-    )
-    .await
-    .context(crate::t!("error-unpacking-webserver"))?;
+    #[cfg(target_os = "android")]
+    which::which("httpd").context(crate::t!("error-getting-httpd-path-termux"))?;
 
     #[cfg(target_os = "windows")]
     {
@@ -145,7 +151,7 @@ pub async fn setup_httpd(
         }
     }
     // Set exec mode for httpd_exe
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "android")))]
     {
         let httpd_exe = httpd_dir.join("bin").join(HTTPD_EXE);
         use std::os::unix::fs::PermissionsExt;
@@ -154,6 +160,7 @@ pub async fn setup_httpd(
     }
 
     // Touch file to mark success
+    #[cfg(not(target_os = "android"))]
     std::fs::write(touch, "Delete to reinstall").context(crate::t!("error-creating-marker"))?;
 
     Ok(())
@@ -199,10 +206,33 @@ pub async fn start_httpd(
     #[cfg(not(unix))]
     let httpd_config = httpd_config.replace("[[IS_LINUX]]", "#");
 
+    #[cfg(target_os = "android")]
+    let httpd_config = httpd_config.replace("[[IS_ANDROID]]", "");
+
+    #[cfg(not(target_os = "android"))]
+    let httpd_config = httpd_config.replace("[[IS_ANDROID]]", "#");
+
+    #[cfg(target_os = "android")]
+    let httpd_config = httpd_config
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("LoadModule") {
+                line.replace("modules/", "${PREFIX}/libexec/apache2/")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+
     std::fs::write(&httpd_cfg, httpd_config).context(crate::t!("error-writing-httpd-conf"))?;
 
     let httpd_cfg = httpd_cfg.to_str().unwrap().to_string();
-    let httpd_exe = httpd_dir.join("bin").join(HTTPD_EXE);
+    let httpd_exe = if cfg!(not(target_os = "android")) {
+        httpd_dir.join("bin").join(HTTPD_EXE)
+    } else {
+        which::which("httpd").unwrap()
+    };
 
     #[allow(unused_mut)]
     let mut envs = HashMap::<String, String>::new();

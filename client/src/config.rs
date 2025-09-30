@@ -85,6 +85,15 @@ lazy_static! {
                 httpd_dir: "httpd-x64".to_string(),
             },
         );
+        #[cfg(target_os = "android")]
+        m.insert(
+            Platform::X64,
+            EnvConfig {
+                home_1c: PathBuf::from("/data/data/com.termux/files/home/opt/1C"),
+                httpd: "".to_string(), // TODO
+                httpd_dir: "httpd-x64".to_string(),
+            },
+        );
         m
     };
 }
