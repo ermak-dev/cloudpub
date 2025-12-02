@@ -94,3 +94,17 @@ purge-cache-dir = Очистка кеш директории: {$path}
 # GUI messages
 show-window = Открыть CloudPub
 quit = Завершить
+
+# Error messages
+error-execute-failed = Ошибка запуска {$err}
+
+# 1C plugin errors
+error-onec-platform-not-found = Платформа 1C не найдена, укажите ее битность (x32/x64) и путь в настройках
+error-onec-path-not-found = Путь до платформы 1C ({$path}) не найден, укажите его в настройках
+error-onec-wsap-not-found = Модуль {$module} не найден в {$path}. Проверьте настройки и убедитесь что у вас установлены модули расширения веб-сервера для 1С
+error-onec-writing-vrd = Ошибка записи default.vrd
+
+# Configuration errors
+error-config-not-found = Конфигурационный файл не найден ({$path}). Пожалуйста, укажите правильный путь к конфигурационному файлу с помощью параметра --config
+error-config-load-failed = Не удалось загрузить конфигурацию из файла: {$path}
+error-config-token-missing = В конфигурации отсутствует токен аутентификации. Пожалуйста, войдите в систему с помощью команды 'clo login' перед установкой службы.

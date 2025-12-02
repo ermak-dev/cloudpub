@@ -21,6 +21,7 @@ pub const HANDSHAKE_TIMEOUT: u64 = 5; // Timeout for transport handshake
 pub const DEFAULT_NODELAY: bool = true;
 pub const DEFAULT_KEEPALIVE_SECS: u64 = 20;
 pub const DEFAULT_KEEPALIVE_INTERVAL: u64 = 8;
+pub const MESSAGE_TIMEOUT_SECS: u64 = 60;
 
 // FIXME: Determine reasonable size
 /// UDP MTU. Currently far larger than necessary

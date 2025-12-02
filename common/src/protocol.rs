@@ -50,6 +50,9 @@ impl Display for Protocol {
             Protocol::Minecraft => write!(f, "minecraft"),
             Protocol::Webdav => write!(f, "webdav"),
             Protocol::Rtsp => write!(f, "rtsp"),
+            Protocol::Rdp => write!(f, "rdp"),
+            Protocol::Vnc => write!(f, "vnc"),
+            Protocol::Ssh => write!(f, "ssh"),
         }
     }
 }
@@ -67,6 +70,9 @@ impl FromStr for Protocol {
             "minecraft" => Ok(Protocol::Minecraft),
             "webdav" => Ok(Protocol::Webdav),
             "rtsp" => Ok(Protocol::Rtsp),
+            "rdp" => Ok(Protocol::Rdp),
+            "vnc" => Ok(Protocol::Vnc),
+            "ssh" => Ok(Protocol::Ssh),
             _ => bail!("Invalid protocol: {}", s),
         }
     }
@@ -83,6 +89,9 @@ impl DefaultPort for Protocol {
             Protocol::Minecraft => Some(25565),
             Protocol::Webdav => None,
             Protocol::Rtsp => Some(554),
+            Protocol::Rdp => Some(3389),
+            Protocol::Vnc => Some(5900),
+            Protocol::Ssh => Some(22),
         }
     }
 }
@@ -160,7 +169,9 @@ impl PartialEq for ClientEndpoint {
 impl Display for ClientEndpoint {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         if let Some(name) = self.description.as_ref() {
-            write!(f, "[{}] ", name)?;
+            if !name.is_empty() {
+                write!(f, "[{}] ", name)?;
+            }
         }
         write!(f, "{}", self.as_url())
     }
@@ -193,7 +204,14 @@ impl Endpoint for ClientEndpoint {
                     &self.local_addr
                 )
             }
-            Protocol::Http | Protocol::Https | Protocol::Tcp | Protocol::Udp | Protocol::Rtsp => {
+            Protocol::Http
+            | Protocol::Https
+            | Protocol::Tcp
+            | Protocol::Udp
+            | Protocol::Rtsp
+            | Protocol::Rdp
+            | Protocol::Vnc
+            | Protocol::Ssh => {
                 let credentials = self.credentials();
                 format!(
                     "{}://{}{}:{}{}",

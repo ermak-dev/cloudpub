@@ -198,7 +198,10 @@ impl PublishArgs {
                 | Protocol::Https
                 | Protocol::Tcp
                 | Protocol::Udp
-                | Protocol::Rtsp => {
+                | Protocol::Rtsp
+                | Protocol::Rdp
+                | Protocol::Vnc
+                | Protocol::Ssh => {
                     if let Ok(port) = self.address.parse::<u16>() {
                         ("localhost".to_string(), port, String::new())
                     } else {

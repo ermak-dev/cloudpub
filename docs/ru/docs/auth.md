@@ -1,5 +1,6 @@
 ---
-sidebar_position: 15
+sidebar_position: 10
+sidebar_label: Аутентификация и ACL
 slug: /auth
 ---
 

@@ -94,3 +94,17 @@ purge-cache-dir = Purge cache dir: {$path}
 # GUI messages
 show-window = Show CloudPub
 quit = Quit
+
+# Error messages
+error-execute-failed = Launch error {$err}
+
+# 1C plugin errors
+error-onec-platform-not-found = 1C platform not found, specify its bitness (x32/x64) and path in settings
+error-onec-path-not-found = Path to 1C platform ({$path}) not found, specify it in settings
+error-onec-wsap-not-found = Module {$module} not found in {$path}. Check settings and make sure you have web server extension modules for 1C installed
+error-onec-writing-vrd = Error writing default.vrd
+
+# Configuration errors
+error-config-not-found = Configuration file not found ({$path}). Please specify the correct path to the configuration file using the --config parameter
+error-config-load-failed = Failed to load configuration from file: {$path}
+error-config-token-missing = Authorization token is missing in the configuration. Please log in using the 'clo login' command before installing the service.

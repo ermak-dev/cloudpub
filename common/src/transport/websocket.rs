@@ -10,11 +10,14 @@ use super::{
     TcpTransport, Transport,
 };
 use crate::config::TransportConfig;
+use crate::constants::MESSAGE_TIMEOUT_SECS;
 use anyhow::{anyhow, Context as _};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures_core::stream::Stream as AsyncStream;
+use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
+use tokio::time::timeout;
 
 use crate::utils::trace_message;
 use dashmap::DashMap;
@@ -109,42 +112,51 @@ struct StreamWrapper {
 #[async_trait]
 impl ProtobufStream for StreamWrapper {
     async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
-        match self.inner.next().await {
-            Some(Ok(Message::Binary(b))) => {
-                let msg = crate::protocol::Message::decode(b.as_ref())
-                    .context("Failed to decode protobuf message")?;
-                let msg = msg
-                    .message
-                    .context("Message field is missing in the protobuf message")?;
-                trace_message("Recv", &msg);
-                Ok(Some(msg))
-            }
-            Some(Ok(Message::Close(_))) => {
-                debug!("WebSocket connection closed");
-                Ok(None)
-            }
-            Some(Ok(Message::Ping(data))) => {
-                debug!("Received ping, sending pong");
-                self.inner
-                    .send(Message::Pong(data))
-                    .await
-                    .context("Failed to send pong")?;
-                Ok(None)
-            }
-            Some(Ok(Message::Pong(_))) => {
-                debug!("Received pong");
-                Ok(None)
-            }
-            Some(Ok(Message::Text(_))) => {
-                error!("Received unexpected text message");
-                Err(anyhow!("Unexpected text message received"))
-            }
-            Some(Ok(m)) => {
-                error!("Received unexpected  message: {:?}", m);
-                Err(anyhow!("Unexpected  message received"))
-            }
-            None => Ok(None),
-            Some(Err(e)) => Err(anyhow!("WebSocket error: {}", e)),
+        let timeout_duration = Duration::from_secs(MESSAGE_TIMEOUT_SECS);
+        let result = timeout(timeout_duration, self.inner.next()).await;
+
+        match result {
+            Err(_) => Err(anyhow!(
+                "Timeout reading message after {} seconds",
+                MESSAGE_TIMEOUT_SECS
+            )),
+            Ok(msg_result) => match msg_result {
+                Some(Ok(Message::Binary(b))) => {
+                    let msg = crate::protocol::Message::decode(b.as_ref())
+                        .context("Failed to decode protobuf message")?;
+                    let msg = msg
+                        .message
+                        .context("Message field is missing in the protobuf message")?;
+                    trace_message("Recv", &msg);
+                    Ok(Some(msg))
+                }
+                Some(Ok(Message::Close(_))) => {
+                    debug!("WebSocket connection closed");
+                    Ok(None)
+                }
+                Some(Ok(Message::Ping(data))) => {
+                    debug!("Received ping, sending pong");
+                    self.inner
+                        .send(Message::Pong(data))
+                        .await
+                        .context("Failed to send pong")?;
+                    Ok(None)
+                }
+                Some(Ok(Message::Pong(_))) => {
+                    debug!("Received pong");
+                    Ok(None)
+                }
+                Some(Ok(Message::Text(_))) => {
+                    error!("Received unexpected text message");
+                    Err(anyhow!("Unexpected text message received"))
+                }
+                Some(Ok(m)) => {
+                    error!("Received unexpected  message: {:?}", m);
+                    Err(anyhow!("Unexpected  message received"))
+                }
+                None => Ok(None),
+                Some(Err(e)) => Err(anyhow!("WebSocket error: {}", e)),
+            },
         }
     }
 
@@ -159,10 +171,20 @@ impl ProtobufStream for StreamWrapper {
         };
         msg.encode(&mut buf)
             .context("Failed to encode protobuf message")?;
-        self.inner
-            .send(Message::Binary(buf.into()))
-            .await
-            .context("Failed to send WebSocket message")?;
+
+        let timeout_duration = Duration::from_secs(MESSAGE_TIMEOUT_SECS);
+        timeout(
+            timeout_duration,
+            self.inner.send(Message::Binary(buf.into())),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Timeout writing message after {} seconds",
+                MESSAGE_TIMEOUT_SECS
+            )
+        })?
+        .context("Failed to send WebSocket message")?;
         Ok(())
     }
 

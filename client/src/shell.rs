@@ -59,7 +59,7 @@ impl SubProcess {
                     result_tx
                         .send(Message::Error(ErrorInfo {
                             kind: ErrorKind::ExecuteFailed.into(),
-                            message: format!("Ошибка запуска {}", err),
+                            message: crate::t!("error-execute-failed", "err" => err.to_string()),
                             guid: String::new(),
                         }))
                         .await

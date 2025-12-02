@@ -1,5 +1,6 @@
 ---
-sidebar_position: 98
+sidebar_position: 21
+sidebar_label: Docker
 description: Использование CloudPub с Docker
 slug: /docker
 ---

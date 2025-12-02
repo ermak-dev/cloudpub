@@ -1,5 +1,6 @@
 ---
-sidebar_position: 103
+sidebar_position: 22
+sidebar_label: SDK
 slug: /sdk
 ---
 

@@ -1,5 +1,6 @@
 ---
-sidebar_position: 102
+sidebar_position: 23
+sidebar_label: On-Premise
 slug: /onprem
 ---
 

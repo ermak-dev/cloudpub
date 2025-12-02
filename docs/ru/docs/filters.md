@@ -1,5 +1,6 @@
 ---
-sidebar_position: 97
+sidebar_position: 14
+sidebar_label: Фильтрация трафика
 slug: /filter
 ---
 

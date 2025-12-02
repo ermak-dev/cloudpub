@@ -1,4 +1,5 @@
 use crate::config::{TcpConfig, TransportConfig};
+use crate::constants::MESSAGE_TIMEOUT_SECS;
 
 use super::{AddrMaybeCached, ProtobufStream, SocketOpts, Transport};
 pub use crate::unix_tcp::{Listener, NamedSocketAddr, SocketAddr, Stream};
@@ -17,6 +18,7 @@ use crate::protocol::{read_message, write_message};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::time::timeout;
 use tracing::trace;
 use url::Url;
 
@@ -84,9 +86,10 @@ impl AsyncWrite for TcpStream {
 #[async_trait]
 impl ProtobufStream for TcpStream {
     async fn recv_message(&mut self) -> anyhow::Result<Option<ProtocolMessage>> {
-        match read_message(&mut self.inner).await {
-            Ok(msg) => Ok(Some(msg)),
-            Err(e) => {
+        let timeout_duration = Duration::from_secs(MESSAGE_TIMEOUT_SECS);
+        match timeout(timeout_duration, read_message(&mut self.inner)).await {
+            Ok(Ok(msg)) => Ok(Some(msg)),
+            Ok(Err(e)) => {
                 if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
                     if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
                         return Ok(None);
@@ -94,11 +97,23 @@ impl ProtobufStream for TcpStream {
                 }
                 Err(e)
             }
+            Err(_) => Err(anyhow::anyhow!(
+                "Timeout reading message after {} seconds",
+                MESSAGE_TIMEOUT_SECS
+            )),
         }
     }
 
     async fn send_message(&mut self, msg: &ProtocolMessage) -> anyhow::Result<()> {
-        write_message(&mut self.inner, msg).await
+        let timeout_duration = Duration::from_secs(MESSAGE_TIMEOUT_SECS);
+        timeout(timeout_duration, write_message(&mut self.inner, msg))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Timeout writing message after {} seconds",
+                    MESSAGE_TIMEOUT_SECS
+                )
+            })?
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {

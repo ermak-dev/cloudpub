@@ -44,7 +44,7 @@ fn check_enviroment(config: Arc<RwLock<ClientConfig>>) -> Result<EnvConfig> {
     let mut env = if let Some(env) = env {
         env
     } else {
-        bail!("Платформа 1C не найдена, укажите ее битность (x32/x64) и путь в настройках");
+        bail!(crate::t!("error-onec-platform-not-found"));
     };
 
     if let Some(one_c_home) = &config.read().one_c_home {
@@ -52,10 +52,7 @@ fn check_enviroment(config: Arc<RwLock<ClientConfig>>) -> Result<EnvConfig> {
     }
 
     if !std::path::Path::new(&env.home_1c).exists() {
-        bail!(
-            "Путь до платформы 1C ({}) не найден, укажите его в настройках",
-            env.home_1c.to_str().unwrap()
-        );
+        bail!(crate::t!("error-onec-path-not-found", "path" => env.home_1c.to_str().unwrap()));
     }
     Ok(env)
 }
@@ -117,8 +114,7 @@ impl Plugin for OneCPlugin {
         let mut default_vrd = publish_dir.clone();
         default_vrd.push("default.vrd");
 
-        let wsap_error = format!(
-            "Модуль {} на найден в {}. Проверьте настройки и убедитесь что у вас установлены модули расширения веб-сервера для 1С", WSAP_MODULE, &env.home_1c.to_str().unwrap());
+        let wsap_error = crate::t!("error-onec-wsap-not-found", "module" => WSAP_MODULE, "path" => env.home_1c.to_str().unwrap());
 
         let wsap = if let Some(wsap) =
             find(&env.home_1c, &PathBuf::from(WSAP_MODULE)).context(wsap_error.clone())?
@@ -139,7 +135,8 @@ impl Plugin for OneCPlugin {
         let vrd_config = DEFAULT_VRD.replace("[[IB]]", &escape_str_attribute(&ib));
 
         if !default_vrd.exists() {
-            std::fs::write(&default_vrd, vrd_config).context("Ошибка записи default.vrd")?;
+            std::fs::write(&default_vrd, vrd_config)
+                .context(crate::t!("error-onec-writing-vrd"))?;
         }
 
         let httpd_config = ONEC_CONFIG.replace("[[WSAP_MODULE]]", wsap.to_str().unwrap());

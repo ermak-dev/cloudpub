@@ -1,5 +1,6 @@
 ---
-sidebar_position: 101
+sidebar_position: 30
+sidebar_label: FAQ
 slug: /faq
 ---
 
@@ -23,16 +24,34 @@ clo run
 C:\Users\[ВАШ ПОЛЬЗОВАТЕЛЬ]\AppData\Local\cloudpub
 ```
 
+При запуске как сервис (Windows):
+
+```
+C:\Windows\System32\config\systemprofile\AppData\Local\cloudpub
+```
+
 На Linux:
 
 ```
 /home/[ВАШ ПОЛЬЗОВАТЕЛЬ]/.cache/cloudpub
 ```
 
+При запуске как сервис (Linux):
+
+```
+/root/.cache/cloudpub
+```
+
 На MacOS:
 
 ```
 /Users/[ВАШ ПОЛЬЗОВАТЕЛЬ]/.cache/cloudpub
+```
+
+При запуске как сервис (MacOS):
+
+```
+/var/root/.cache/cloudpub
 ```
 
 ## Расположение файлов конфигурации
@@ -43,16 +62,34 @@ C:\Users\[ВАШ ПОЛЬЗОВАТЕЛЬ]\AppData\Local\cloudpub
 C:\Users\[Ваш пользователь]\AppData\Roaming\cloudpub
 ```
 
+При запуске как сервис (Windows):
+
+```
+C:\ProgramData\cloudpub\client.toml
+```
+
 На Linux
 
 ```
 /home/[ВАШ ПОЛЬЗОВАТЕЛЬ]/.config/cloudpub
 ```
 
+При запуске как сервис (Linux):
+
+```
+/root/.config/cloudpub/client.toml
+```
+
 На MacOS:
 
 ```
 /Users/[ВАШ ПОЛЬЗОВАТЕЛЬ]/.config/cloudpub
+```
+
+При запуске как сервис (MacOS):
+
+```
+/var/root/.config/cloudpub/client.toml
 ```
 
 ## Задублировался агент или пропали публикации
@@ -77,3 +114,20 @@ C:\Users\[Ваш пользователь]\AppData\Roaming\cloudpub
 В этом случае идентификатор агента будет одинаковым для обеих машин, что приведет к конфликту - агенты будут отключать друг друга при попытке подключения к системе.
 
 **Решение:** необходимо изменить имя хоста на одной из машин для обеспечения уникальности идентификатора агента.
+
+## Бесконечное подключение к серверу в Termux
+
+При использовании CloudPub в Termux клиент может бесконечно пытаться подключиться к серверу без успеха.
+
+**Причина:** В Termux по умолчанию отсутствует файл `/etc/resolv.conf` с настройками DNS-серверов, который используется библиотекой libc для разрешения доменных имен.
+
+**Решение:** создайте файл `/etc/resolv.conf` и укажите в нем DNS-сервер:
+
+```bash
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+```
+
+Также можно использовать другие публичные DNS-серверы, например:
+- `8.8.4.4` (Google DNS)
+- `1.1.1.1` (Cloudflare DNS)
+- `77.88.8.8` (Яндекс DNS)

@@ -1,5 +1,6 @@
 ---
 sidebar_position: 5
+sidebar_label: WebDAV (публикация файлов)
 slug: /webdav
 ---
 

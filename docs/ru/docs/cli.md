@@ -1,5 +1,6 @@
 ---
-sidebar_position: 99
+sidebar_position: 20
+sidebar_label: Командная строка
 slug: /cli
 ---
 

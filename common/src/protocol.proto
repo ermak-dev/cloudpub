@@ -11,6 +11,9 @@ enum Protocol {
   MINECRAFT = 5;
   WEBDAV = 6;
   RTSP = 7;
+  RDP = 8;
+  VNC = 9;
+  SSH = 10;
 }
 
 enum Auth {

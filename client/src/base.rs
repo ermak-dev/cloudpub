@@ -74,16 +74,14 @@ fn handle_service_command(action: &ServiceAction, config: &ClientConfig) -> Resu
     };
 
     if actual_config.as_os_str().is_empty() || !actual_config.exists() {
-        bail!("Конфигурационный файл не найден ({:?}). Пожалуйста, укажите правильный путь к конфигурационному файлу с помощью параметра --config", config_path);
+        bail!(crate::t!("error-config-not-found", "path" => format!("{:?}", config_path)));
     }
 
-    let cfg = ClientConfig::from_file(&actual_config, true).context(format!(
-        "Не удалось загрузить конфигурацию из файла: {:?}",
-        actual_config
-    ))?;
+    let cfg = ClientConfig::from_file(&actual_config, true)
+        .context(crate::t!("error-config-load-failed", "path" => format!("{:?}", actual_config)))?;
 
     if cfg.token.is_none() {
-        bail!("В конфигурации отсутствует токен аутентификации. Пожалуйста, войдите в систему с помощью команды 'clo login' перед установкой службы.");
+        bail!(crate::t!("error-config-token-missing"));
     }
     // Create the appropriate service manager for the current platform
     let service_manager = create_service_manager(actual_config);
