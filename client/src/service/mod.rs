@@ -65,6 +65,11 @@ impl ServiceConfig {
             // For macOS service running as root
             PathBuf::from("/var/root/.config/cloudpub/client.toml")
         }
+        #[cfg(target_os = "android")]
+        {
+            // Service running for Android is not supported
+            unreachable!()
+        }
     }
 
     /// Get the original user's config path when running under sudo

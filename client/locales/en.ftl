@@ -35,6 +35,7 @@ error-creating-eula-file = Error creating eula.txt file
 error-reading-server-properties = Error reading server.properties
 error-writing-server-properties = Error writing server.properties
 error-getting-java-path = Error getting path to java
+error-getting-java-path-termux = Error getting path to java. Please install it manually: `apt install openjdk-21`
 
 # Error contexts
 error-downloading-webserver = Error downloading web server
@@ -45,6 +46,7 @@ error-setting-permissions = Error setting execution permissions
 error-creating-marker = Error creating marker file
 error-writing-httpd-conf = Error writing httpd.conf
 error-start-server = Failed to start server within 60 seconds. Please check server logs.
+error-getting-httpd-path-termux = Error getting path to httpd. Please install it manually: `apt install apache2`
 
 # Service messages
 service-published = Service published: {$endpoint}
