@@ -65,6 +65,11 @@ impl ServiceConfig {
             // For macOS service running as root
             PathBuf::from("/var/root/.config/cloudpub/client.toml")
         }
+        #[cfg(target_os = "android")]
+        {
+            // For Android/Termux
+            PathBuf::from("/data/data/com.termux/files/home/.config/cloudpub/client.toml")
+        }
     }
 
     /// Get the original user's config path when running under sudo
