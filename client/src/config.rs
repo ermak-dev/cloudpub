@@ -8,6 +8,7 @@ use std::str::FromStr;
 use crate::options::ConfigOption;
 pub use cloudpub_common::config::{MaskedString, TransportConfig};
 use lazy_static::lazy_static;
+#[cfg(feature = "machineid")]
 use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
 use std::collections::HashMap;
 use std::fs::{self, create_dir_all, File};
@@ -222,6 +223,7 @@ impl ClientConfig {
         Ok(())
     }
 
+    #[cfg(feature = "machineid")]
     pub fn get_hwid(&self) -> String {
         self.hwid
             .as_ref()
@@ -234,6 +236,14 @@ impl ClientConfig {
                     .build("cloudpub")
                     .unwrap_or(self.agent_id.clone()),
             )
+            .to_string()
+    }
+
+    #[cfg(not(feature = "machineid"))]
+    pub fn get_hwid(&self) -> String {
+        self.hwid
+            .as_ref()
+            .unwrap_or(&self.agent_id)
             .to_string()
     }
 }
