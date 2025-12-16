@@ -1,0 +1,95 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version from VERSION file
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build artifacts
+        run: |
+          docker build --target artifacts --output type=local,dest=./output .
+
+      - name: List artifacts
+        run: |
+          find ./output -type f -exec ls -la {} \;
+
+      - name: Package artifacts
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p dist
+
+          # Linux x86_64 - tar.gz
+          cd output/artifacts/x86_64
+          tar -czvf ../../../dist/clo-${VERSION}-linux-x86_64.tar.gz clo
+          cd ../../..
+
+          # Linux aarch64 - tar.gz
+          cd output/artifacts/aarch64
+          tar -czvf ../../../dist/clo-${VERSION}-linux-aarch64.tar.gz clo
+          cd ../../..
+
+          # Linux arm - tar.gz
+          cd output/artifacts/arm
+          tar -czvf ../../../dist/clo-${VERSION}-linux-arm.tar.gz clo
+          cd ../../..
+
+          # Linux armv5te - tar.gz
+          cd output/artifacts/armv5te
+          tar -czvf ../../../dist/clo-${VERSION}-linux-armv5te.tar.gz clo
+          cd ../../..
+
+          # Linux mipsel - tar.gz
+          cd output/artifacts/mipsel
+          tar -czvf ../../../dist/clo-${VERSION}-linux-mipsel.tar.gz clo
+          cd ../../..
+
+          # Android arm64 - tar.gz
+          cd output/artifacts/android-arm64
+          tar -czvf ../../../dist/clo-${VERSION}-android-arm64.tar.gz clo
+          cd ../../..
+
+          # Windows x64 - zip
+          cd output/artifacts/win64
+          zip ../../../dist/clo-${VERSION}-windows-x64.zip clo.exe
+          cd ../../..
+
+          # List packaged files
+          ls -la dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release v${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/clo-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+            dist/clo-${{ steps.version.outputs.version }}-linux-aarch64.tar.gz
+            dist/clo-${{ steps.version.outputs.version }}-linux-arm.tar.gz
+            dist/clo-${{ steps.version.outputs.version }}-linux-armv5te.tar.gz
+            dist/clo-${{ steps.version.outputs.version }}-linux-mipsel.tar.gz
+            dist/clo-${{ steps.version.outputs.version }}-android-arm64.tar.gz
+            dist/clo-${{ steps.version.outputs.version }}-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
