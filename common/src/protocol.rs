@@ -144,6 +144,27 @@ impl Display for Auth {
     }
 }
 
+impl FromStr for ProxyProtocol {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "none" => Ok(ProxyProtocol::None),
+            "v2" => Ok(ProxyProtocol::V2),
+            _ => bail!("Invalid proxy protocol: {}", s),
+        }
+    }
+}
+
+impl Display for ProxyProtocol {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            ProxyProtocol::None => write!(f, "none"),
+            ProxyProtocol::V2 => write!(f, "v2"),
+        }
+    }
+}
+
 impl FromStr for FilterAction {
     type Err = anyhow::Error;
 

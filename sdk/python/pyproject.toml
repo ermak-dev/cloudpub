@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cloudpub_python_sdk"
-version = "3.0.0"
+version = "3.0.1"
 description = "Python bindings for CloudPub client"
 requires-python = ">=3.8"
 readme = "README.md"

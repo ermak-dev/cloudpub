@@ -22,6 +22,11 @@ enum Auth {
   FORM = 2;
 }
 
+enum ProxyProtocol {
+  PROXY_PROTOCOL_NONE = 0;
+  PROXY_PROTOCOL_V2 = 1;
+}
+
 enum Role {
   NOBODY = 0;
   ADMIN = 1;
@@ -76,6 +81,7 @@ message ClientEndpoint {
   string password = 10;
   repeated Header headers = 11;
   repeated FilterRule filter_rules = 12;
+  ProxyProtocol proxy_protocol = 13;
 }
 
 message ServerEndpoint {

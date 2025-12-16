@@ -5,6 +5,7 @@ pub mod fair_channel;
 pub mod lease;
 pub mod logging;
 pub mod protocol;
+pub mod proxy_protocol;
 pub mod routing;
 pub mod transport;
 pub mod unix_tcp;

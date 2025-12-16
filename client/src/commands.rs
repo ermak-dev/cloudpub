@@ -187,6 +187,7 @@ impl PublishArgs {
                 filter_rules,
                 username,
                 password: password.0,
+                proxy_protocol: 0, // ProxyProtocolNone
             })
         } else {
             let (local_addr, local_port, local_path) = match self.protocol {
@@ -255,6 +256,7 @@ impl PublishArgs {
                     .clone()
                     .unwrap_or(MaskedString("".to_string()))
                     .to_string(),
+                proxy_protocol: 0, // ProxyProtocolNone
             })
         }
     }

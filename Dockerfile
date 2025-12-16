@@ -34,6 +34,15 @@ RUN     apt install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
 #       Install MIPS (little-endian) toolchain
 RUN     apt-get update && apt install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross
 
+#       Install Android NDK for Android builds
+RUN     apt install -y wget unzip && \
+        wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O /tmp/ndk.zip && \
+        unzip -q /tmp/ndk.zip -d /opt && \
+        rm /tmp/ndk.zip && \
+        chmod -R a+rx /opt/android-ndk-r26d
+ENV     ANDROID_NDK_HOME="/opt/android-ndk-r26d"
+ENV     PATH="$PATH:/opt/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
 USER    cloudpub:cloudpub
 
 RUN     cargo install cargo-chef
@@ -46,6 +55,7 @@ RUN     rustup target add arm-unknown-linux-musleabi
 RUN     rustup target add armv5te-unknown-linux-musleabi
 RUN     rustup target add aarch64-unknown-linux-musl
 RUN     rustup target add x86_64-pc-windows-gnu
+RUN     rustup target add aarch64-linux-android
 
 ##########################################
 FROM    dev AS planner
@@ -73,6 +83,9 @@ ENV     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/bin/aarch64-linux-gn
 ENV     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/usr/bin/x86_64-w64-mingw32-gcc
 ENV     RUSTFLAGS_X86_64_PC_WINDOWS_GNU="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01"
 ENV     CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/mipsel-linux-gnu-gcc
+ENV     CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android24-clang
+ENV     CC_aarch64_linux_android=aarch64-linux-android24-clang
+ENV     AR_aarch64_linux_android=llvm-ar
 
 WORKDIR $HOME
 
@@ -92,6 +105,8 @@ RUN     rustup component add rust-src --toolchain nightly && \
         --no-default-features \
         -Z build-std=std,panic_abort,core,alloc \
         --recipe-path $HOME/recipe.json
+
+RUN     cargo chef cook --bin clo --profile minimal --target aarch64-linux-android --no-default-features --recipe-path $HOME/recipe.json
 
 COPY    --chown=cloudpub:cloudpub . $HOME
 USER    cloudpub:cloudpub
@@ -128,9 +143,13 @@ RUN     mkdir -p artifacts/mipsel && \
         --target mipsel-unknown-linux-gnu \
         --profile minimal \
         --no-default-features \
-        -Z build-std=std,panic_abort,core,alloc \
+        -Z build-std=std,panic_abort,core,alloc && \
         cp target/mipsel-unknown-linux-gnu/minimal/clo artifacts/mipsel/clo && \
         file artifacts/mipsel/clo
+
+RUN     mkdir -p artifacts/android-arm64 && \
+        cargo build -p cloudpub-client --target aarch64-linux-android --profile minimal --no-default-features && \
+        cp target/aarch64-linux-android/minimal/clo artifacts/android-arm64/clo
 
 FROM scratch AS artifacts
 COPY --from=builder /home/cloudpub/artifacts /artifacts
