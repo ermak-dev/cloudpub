@@ -310,7 +310,7 @@ pub async fn unzip(
         }
 
         progress.current = (i + 1) as u32;
-        if progress.current % 100 == 0 {
+        if progress.current.is_multiple_of(100) {
             result_tx
                 .send(Message::Progress(progress.clone()))
                 .await

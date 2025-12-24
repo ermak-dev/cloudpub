@@ -84,6 +84,15 @@ lazy_static! {
                 httpd_dir: "httpd-x64".to_string(),
             },
         );
+        #[cfg(target_os = "android")]
+        m.insert(
+            Platform::X64,
+            EnvConfig {
+                home_1c: PathBuf::from("/data/local/tmp"),
+                httpd: String::new(),
+                httpd_dir: String::new(),
+            },
+        );
         m
     };
 }
@@ -241,10 +250,7 @@ impl ClientConfig {
 
     #[cfg(target_os = "android")]
     pub fn get_hwid(&self) -> String {
-        self.hwid
-            .as_ref()
-            .unwrap_or(&self.agent_id)
-            .to_string()
+        self.hwid.as_ref().unwrap_or(&self.agent_id).to_string()
     }
 }
 

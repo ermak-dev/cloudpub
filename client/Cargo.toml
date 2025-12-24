@@ -1,6 +1,6 @@
 [package]
 name = "cloudpub-client"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2021"
 authors = ["CloudPub <support@cloudpub.ru>"]
 license = "Apache-2.0"
@@ -32,7 +32,7 @@ fluent-bundle = "0.16"
 unic-langid = "0.9"
 
 [dependencies]
-cloudpub-common = { version = "3.0.1", path = "../common", features = ["rustls"] }
+cloudpub-common = { version = "3.0.2", path = "../common", features = ["rustls"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true

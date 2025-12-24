@@ -1,7 +1,9 @@
 use crate::config::{ClientConfig, ClientOpts, EnvConfig, ENV_CONFIG};
 use crate::plugins::httpd::{setup_httpd, start_httpd};
 use crate::plugins::Plugin;
-use crate::shell::{find, get_cache_dir, SubProcess};
+#[cfg(not(target_os = "windows"))]
+use crate::shell::get_cache_dir;
+use crate::shell::{find, SubProcess};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use cloudpub_common::protocol::message::Message;

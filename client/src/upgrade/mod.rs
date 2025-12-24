@@ -49,6 +49,7 @@ pub struct DownloadConfig {
     pub macos: OsDownloads,
     pub windows: OsDownloads,
     pub linux: OsDownloads,
+    pub android: OsDownloads,
 }
 
 impl DownloadConfig {
@@ -189,6 +190,23 @@ impl DownloadConfig {
             platforms
         };
 
+        #[cfg(target_os = "android")]
+        let android_platforms = {
+            let mut platforms = HashMap::new();
+            platforms.insert(
+                "aarch64".to_string(),
+                PlatformDownloads {
+                    gui: None,
+                    cli: Some(format!(
+                        "{base_url}clo-{version}-{branch}-android-arm64.tar.gz"
+                    )),
+                    rpm: None,
+                    deb: None,
+                },
+            );
+            platforms
+        };
+
         Self {
             #[cfg(target_os = "macos")]
             macos: OsDownloads {
@@ -220,6 +238,16 @@ impl DownloadConfig {
                 name: "Linux".to_string(),
                 platforms: HashMap::new(),
             },
+            #[cfg(target_os = "android")]
+            android: OsDownloads {
+                name: "Android".to_string(),
+                platforms: android_platforms,
+            },
+            #[cfg(not(target_os = "android"))]
+            android: OsDownloads {
+                name: "Android".to_string(),
+                platforms: HashMap::new(),
+            },
         }
     }
 }
@@ -239,7 +267,14 @@ pub fn get_current_os() -> String {
     return "windows".to_string();
     #[cfg(target_os = "linux")]
     return "linux".to_string();
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "android")]
+    return "android".to_string();
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "android"
+    )))]
     return std::env::consts::OS.to_string();
 }
 
@@ -301,6 +336,7 @@ pub fn get_download_url(
         "macos" => &config.macos,
         "windows" => &config.windows,
         "linux" => &config.linux,
+        "android" => &config.android,
         _ => {
             return Err(anyhow::anyhow!("Unsupported OS: {}", os))
                 .context("Failed to get OS downloads")
@@ -335,6 +371,7 @@ pub fn get_download_url(
 }
 
 /// Generic function to run a script with given template and replacements
+#[allow(unused_variables)]
 fn run_script(
     script_name: &str,
     script_template: &str,
