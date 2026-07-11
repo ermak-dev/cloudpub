@@ -38,14 +38,18 @@ pub struct {} {{",
         format!("{}/build-vars.rs", out_dir),
         format!(
             r#"// Build variables
-pub const DOMAIN: &str = "cloudpub.ru";
-pub const PORT: u16 = 443;
+// Defaults baked from the build profile; DOMAIN, PORT, SITE_NAME and
+// TRAFFIC_LIMIT can be overridden at runtime via CLOUDPUB_* env vars
+// (see runtime statics in lib.rs).
+pub const DEFAULT_DOMAIN: &str = "cloudpub.ru";
+pub const DEFAULT_PORT: u16 = 443;
 pub const VERSION: &str = {:?};
 pub const LONG_VERSION: &str = "{}-{} (cloudpub.ru)";
-pub const SITE_NAME: &str = "CloudPub";
+pub const DEFAULT_SITE_NAME: &str = "CloudPub";
 pub const ONPREM: bool = false;
 pub const BRANCH: &str = "stable";
-pub const TRAFFIC_LIMIT: usize = 0;
+#[cfg(target_pointer_width = "64")]
+pub const DEFAULT_TRAFFIC_LIMIT: usize = 0;
 "#,
             std::env::var("CARGO_PKG_VERSION").unwrap(),
             std::env::var("CARGO_PKG_VERSION").unwrap(),

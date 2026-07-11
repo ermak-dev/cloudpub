@@ -55,6 +55,7 @@ pub struct ConnectionBuilder {
     config_path: Option<PathBuf>,
     log_level: String,
     verbose: bool,
+    init_logging: bool,
     token: Option<String>,
     email: Option<String>,
     password: Option<String>,
@@ -68,6 +69,7 @@ impl Default for ConnectionBuilder {
             config_path: None,
             log_level: "info".to_string(),
             verbose: false,
+            init_logging: true,
             token: None,
             email: None,
             password: None,
@@ -169,6 +171,39 @@ impl ConnectionBuilder {
     /// ```
     pub fn verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
+        self
+    }
+
+    /// Включает или отключает инициализацию логирования SDK.
+    ///
+    /// По умолчанию `build()` устанавливает глобальный tracing-подписчик
+    /// (`tracing::subscriber::set_global_default`) с записью в файл лога.
+    /// Если в процессе уже установлен собственный подписчик, такая инициализация
+    /// завершится ошибкой. Вызовите `init_logging(false)`, чтобы SDK не трогал
+    /// глобальное состояние логирования: события SDK попадут в подписчик
+    /// приложения, а настройки `log_level()` и `verbose()` игнорируются -
+    /// фильтрация остается за подписчиком приложения.
+    ///
+    /// # Аргументы
+    ///
+    /// * `init` - false, чтобы использовать собственное логирование приложения
+    ///
+    /// # Пример
+    ///
+    /// ```no_run
+    /// # async fn example() -> anyhow::Result<()> {
+    /// use cloudpub_sdk::Connection;
+    ///
+    /// // В приложении уже настроен tracing-подписчик
+    /// let conn = Connection::builder()
+    ///     .init_logging(false)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn init_logging(mut self, init: bool) -> Self {
+        self.init_logging = init;
         self
     }
 
@@ -390,7 +425,7 @@ impl ConnectionBuilder {
     ///
     /// Этот метод:
     /// 1. Проверяет конфигурацию
-    /// 2. Инициализирует логирование
+    /// 2. Инициализирует логирование (если не отключено через `init_logging(false)`)
     /// 3. Загружает или создает файл конфигурации
     /// 4. Аутентифицируется на сервере (если предоставлены учетные данные)
     /// 5. Устанавливает соединение
@@ -429,7 +464,8 @@ impl ConnectionBuilder {
     ///
     /// Этот метод вернет ошибку, если:
     /// - Email предоставлен без пароля или наоборот
-    /// - Не удалось инициализировать логирование
+    /// - Не удалось инициализировать логирование (например, в процессе уже
+    ///   установлен глобальный tracing-подписчик; используйте `init_logging(false)`)
     /// - Не удалось загрузить или создать файл конфигурации
     /// - Неудачная аутентификация
     /// - Неудачное соединение с сервером
@@ -448,21 +484,27 @@ impl ConnectionBuilder {
             warn!("Failed to raise file descriptor limit: {}", err);
         }
 
-        // Создаем директорию для логов
-        let log_dir = cache_dir().context("Can't get cache dir")?.join("cloudpub");
-        std::fs::create_dir_all(&log_dir).context("Can't create log dir")?;
+        // Инициализируем логирование, если приложение не использует собственное
+        let _guard = if self.init_logging {
+            // Создаем директорию для логов
+            let log_dir = cache_dir().context("Can't get cache dir")?.join("cloudpub");
+            std::fs::create_dir_all(&log_dir).context("Can't create log dir")?;
 
-        let log_file = log_dir.join("client.log");
+            let log_file = log_dir.join("client.log");
 
-        // Инициализируем логирование
-        let _guard = init_log(
-            &self.log_level,
-            &log_file,
-            self.verbose,
-            10 * 1024 * 1024,
-            2,
-        )
-        .context("Failed to initialize logging")?;
+            Some(
+                init_log(
+                    &self.log_level,
+                    &log_file,
+                    self.verbose,
+                    10 * 1024 * 1024,
+                    2,
+                )
+                .context("Failed to initialize logging")?,
+            )
+        } else {
+            None
+        };
 
         // Загружаем конфигурацию
         let mut config = if let Some(ref path) = self.config_path {
@@ -527,5 +569,43 @@ impl ConnectionBuilder {
             .await?;
 
         Ok(connection)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Регрессионный тест: в процессе с уже установленным глобальным
+    // tracing-подписчиком build() без init_logging(false) падал на
+    // set_global_default, а обойти это было нельзя (Connection::new - pub(crate))
+    #[tokio::test]
+    async fn test_build_with_external_subscriber() {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry())
+            .expect("subscriber must not be set yet in this process");
+
+        let err = ConnectionBuilder::new()
+            .build()
+            .await
+            .err()
+            .expect("init_logging defaults to true and must fail");
+        assert!(
+            err.to_string().contains("Failed to initialize logging"),
+            "unexpected error: {err:#}"
+        );
+
+        // С init_logging(false) этап логирования пропускается: сборка доходит
+        // до загрузки конфигурации и падает уже на несуществующем файле
+        let err = ConnectionBuilder::new()
+            .init_logging(false)
+            .config_path("/nonexistent/cloudpub-test/client.toml")
+            .build()
+            .await
+            .err()
+            .expect("nonexistent config path must fail");
+        assert!(
+            !err.to_string().contains("Failed to initialize logging"),
+            "logging must not be initialized: {err:#}"
+        );
     }
 }

@@ -97,18 +97,21 @@
 //!             action_type: FilterAction::FilterAllow as i32,
 //!             action_value: None,
 //!             data: "http.path starts_with \"/api/\" and http.headers[\"X-API-Key\"] contains \"valid\"".to_string(),
+//!             ..Default::default()
 //!         },
 //!         FilterRule {
 //!             order: 1,
 //!             action_type: FilterAction::FilterDeny as i32,
 //!             action_value: None,
 //!             data: "http.path matches \"^/admin.*\" and not (ip.src >= 192.168.1.0 and ip.src <= 192.168.1.255)".to_string(),
+//!             ..Default::default()
 //!         },
 //!         FilterRule {
 //!             order: 2,
 //!             action_type: FilterAction::FilterRedirect as i32,
 //!             action_value: Some("https://api.example.com/v2/".to_string()),  // URL перенаправления
 //!             data: "http.path starts_with \"/api/v1/\"".to_string(),
+//!             ..Default::default()
 //!         },
 //!     ];
 //!
@@ -213,6 +216,7 @@
 //!         action_type: FilterAction::FilterAllow as i32,
 //!         action_value: None,
 //!         data: "ip.src >= 192.168.1.0 and ip.src <= 192.168.1.255 and http.path starts_with \"/api/\"".to_string(),
+//!         ..Default::default()
 //!     },
 //!
 //!     // Блокировать доступ к админ-панели снаружи
@@ -221,6 +225,7 @@
 //!         action_type: FilterAction::FilterDeny as i32,
 //!         action_value: None,
 //!         data: "http.path matches \"^/admin.*\"".to_string(),
+//!         ..Default::default()
 //!     },
 //!
 //!     // Перенаправление старых API эндпоинтов на новую версию
@@ -230,6 +235,7 @@
 //!         action_type: FilterAction::FilterRedirect as i32,
 //!         action_value: Some("https://api.example.com/v2/".to_string()),  // Redirect URL
 //!         data: "http.path starts_with \"/api/v1/\"".to_string(),
+//!         ..Default::default()
 //!     },
 //!
 //!     // Блокировать запросы из определенных стран
@@ -238,6 +244,7 @@
 //!         action_type: FilterAction::FilterDeny as i32,
 //!         action_value: None,
 //!         data: "geo.country != \"Россия\"".to_string(),
+//!         ..Default::default()
 //!     },
 //!
 //!     // Разрешить только аутентифицированные API запросы
@@ -246,6 +253,7 @@
 //!         action_type: FilterAction::FilterAllow as i32,
 //!         action_value: None,
 //!         data: "http.path starts_with \"/api/\" and http.headers[\"Authorization\"] contains \"Bearer\"".to_string(),
+//!         ..Default::default()
 //!     },
 //! ];
 //! ```
@@ -609,12 +617,14 @@
 //!             action_type: FilterAction::FilterAllow as i32,
 //!             action_value: None,
 //!             data: "ip.src == 192.168.1.10 or ip.src == 10.0.0.5".to_string(),  // Разрешить только определенные IP
+//!             ..Default::default()
 //!         },
 //!         FilterRule {
 //!             order: 1,
 //!             action_type: FilterAction::FilterDeny as i32,
 //!             action_value: None,
 //!             data: "ip.src matches \".*\"".to_string(),  // Заблокировать все остальные IP
+//!             ..Default::default()
 //!         },
 //!     ];
 //!     let ssh_service = conn.publish(

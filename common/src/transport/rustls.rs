@@ -290,21 +290,26 @@ impl Transport for TlsTransport {
     }
 
     async fn connect(&self, addr: &AddrMaybeCached) -> Result<Self::Stream> {
-        let conn = self.tcp.connect(addr).await?.into_stream();
+        // Covers the nested TCP connect too, so the whole dial is bounded by
+        // one deadline rather than by the sum of the per-step ones.
+        super::with_connect_deadline(self.tcp.cfg.connect_timeout_secs, "TLS handshake", async {
+            let conn = self.tcp.connect(addr).await?.into_stream();
 
-        let connector = self.connector.as_ref().context("TLS connector is None")?;
+            let connector = self.connector.as_ref().context("TLS connector is None")?;
 
-        let host_name = self
-            .config
-            .hostname
-            .as_deref()
-            .unwrap_or(host_port_pair(&addr.addr)?.0);
+            let host_name = self
+                .config
+                .hostname
+                .as_deref()
+                .unwrap_or(host_port_pair(&addr.addr)?.0);
 
-        Ok(tokio_rustls::TlsStream::Client(
-            connector
-                .connect(ServerName::try_from(host_name)?.to_owned(), conn)
-                .await?,
-        ))
+            Ok(tokio_rustls::TlsStream::Client(
+                connector
+                    .connect(ServerName::try_from(host_name)?.to_owned(), conn)
+                    .await?,
+            ))
+        })
+        .await
     }
 }
 

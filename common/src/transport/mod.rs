@@ -1,4 +1,5 @@
 use crate::config::TransportConfig;
+use crate::constants::{DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_SECS};
 use crate::utils::to_socket_addr;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -112,12 +113,21 @@ pub struct SocketOpts {
     pub priority: Option<u8>,
 }
 
+impl Default for Keepalive {
+    fn default() -> Self {
+        Keepalive {
+            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
+            keepalive_interval: DEFAULT_KEEPALIVE_INTERVAL,
+        }
+    }
+}
+
 impl SocketOpts {
     /// Socket options for the control channel
     pub fn for_control_channel() -> SocketOpts {
         SocketOpts {
             nodelay: Some(true), // Always set nodelay for the control channel
-            keepalive: None,
+            keepalive: Some(Keepalive::default()),
             priority: Some(0), // Set high priority for the control channel
         }
     }
@@ -125,9 +135,28 @@ impl SocketOpts {
     pub fn for_data_channel() -> SocketOpts {
         SocketOpts {
             nodelay: Some(true), // Always set nodelay for the data channel
-            keepalive: None,
+            keepalive: Some(Keepalive::default()),
             priority: Some(0),
         }
+    }
+}
+
+/// Bound a dial with a deadline. `secs` of 0 means no deadline.
+///
+/// The steps this guards - TCP connect, TLS handshake, WebSocket upgrade -
+/// exchange no protocol messages, so `MESSAGE_TIMEOUT_SECS` never applies to
+/// them, and a peer that accepts the connection and then stops responding
+/// would otherwise park the caller indefinitely.
+pub(crate) async fn with_connect_deadline<F, T>(secs: u64, what: &str, fut: F) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    if secs == 0 {
+        return fut.await;
+    }
+    match tokio::time::timeout(Duration::from_secs(secs), fut).await {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("{} timed out after {} seconds", what, secs)),
     }
 }
 
@@ -272,5 +301,148 @@ impl SocketOpts {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{TcpConfig, TransportType, WebsocketConfig};
+    use crate::constants::{DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_SECS};
+    use std::time::Instant;
+    use tokio::net::TcpListener;
+
+    const TEST_CONNECT_TIMEOUT_SECS: u64 = 1;
+    /// Well above the connect timeout, so a hung connect() fails the test
+    /// instead of hanging the whole suite.
+    const TEST_GIVE_UP: Duration = Duration::from_secs(15);
+
+    /// A peer that completes the TCP handshake and then never says anything.
+    /// This is what a dead path behind a stateful middlebox looks like: the
+    /// socket is ESTABLISHED, so neither TLS nor the WebSocket upgrade ever
+    /// gets a reply, and nothing below us times out on its own.
+    async fn silent_peer() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let handle = tokio::spawn(async move {
+            let _held = listener.accept().await;
+            std::future::pending::<()>().await;
+        });
+        (addr, handle)
+    }
+
+    fn transport_config(tls: bool, connect_timeout_secs: u64) -> TransportConfig {
+        TransportConfig {
+            transport_type: TransportType::Websocket,
+            tcp: TcpConfig {
+                connect_timeout_secs,
+                ..Default::default()
+            },
+            tls: Some(Default::default()),
+            websocket: Some(WebsocketConfig { tls }),
+        }
+    }
+
+    async fn resolved(addr: &str) -> AddrMaybeCached {
+        let mut remote = AddrMaybeCached::new(addr);
+        remote.resolve().await.unwrap();
+        remote
+    }
+
+    #[tokio::test]
+    async fn websocket_connect_times_out_on_silent_peer() {
+        let (addr, _peer) = silent_peer().await;
+        let transport =
+            WebsocketTransport::new(&transport_config(false, TEST_CONNECT_TIMEOUT_SECS)).unwrap();
+        let remote = resolved(&addr).await;
+
+        let started = Instant::now();
+        let result = tokio::time::timeout(TEST_GIVE_UP, transport.connect(&remote))
+            .await
+            .expect("connect() hung on the WebSocket upgrade instead of timing out");
+
+        assert!(
+            result.is_err(),
+            "connect() must fail against a peer that never completes the upgrade"
+        );
+        assert!(
+            started.elapsed() < TEST_GIVE_UP,
+            "connect() took {:?}, expected roughly {}s",
+            started.elapsed(),
+            TEST_CONNECT_TIMEOUT_SECS
+        );
+    }
+
+    #[cfg(feature = "rustls")]
+    #[tokio::test]
+    async fn tls_connect_times_out_on_silent_peer() {
+        let (addr, _peer) = silent_peer().await;
+        let transport =
+            TlsTransport::new(&transport_config(true, TEST_CONNECT_TIMEOUT_SECS)).unwrap();
+        let remote = resolved(&addr).await;
+
+        let started = Instant::now();
+        let result = tokio::time::timeout(TEST_GIVE_UP, transport.connect(&remote))
+            .await
+            .expect("connect() hung on the TLS handshake instead of timing out");
+
+        assert!(
+            result.is_err(),
+            "connect() must fail against a peer that never answers the ClientHello"
+        );
+        assert!(
+            started.elapsed() < TEST_GIVE_UP,
+            "connect() took {:?}, expected roughly {}s",
+            started.elapsed(),
+            TEST_CONNECT_TIMEOUT_SECS
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_connect_timeout_disables_the_deadline() {
+        let (addr, _peer) = silent_peer().await;
+        let transport = WebsocketTransport::new(&transport_config(false, 0)).unwrap();
+        let remote = resolved(&addr).await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), transport.connect(&remote))
+                .await
+                .is_err(),
+            "a connect timeout of 0 must mean 'wait forever'"
+        );
+    }
+
+    /// The control channel carries no traffic between heartbeats, so a
+    /// half-open socket is only detected if the kernel probes it.
+    #[tokio::test]
+    async fn control_channel_socket_opts_enable_tcp_keepalive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (client, _accepted) = tokio::join!(
+            async { tokio::net::TcpStream::connect(addr).await.unwrap() },
+            async { listener.accept().await.unwrap() }
+        );
+
+        let stream = Stream::Tcp(client);
+        SocketOpts::for_control_channel().apply(&stream);
+
+        let Stream::Tcp(ref tcp) = stream else {
+            unreachable!("bound a TCP listener")
+        };
+        let sock = socket2::SockRef::from(tcp);
+        assert!(sock.keepalive().unwrap(), "SO_KEEPALIVE must be set");
+        assert_eq!(
+            sock.tcp_keepalive_time().unwrap(),
+            Duration::from_secs(DEFAULT_KEEPALIVE_SECS)
+        );
+        assert_eq!(
+            sock.tcp_keepalive_interval().unwrap(),
+            Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL)
+        );
+    }
+
+    #[tokio::test]
+    async fn data_channel_socket_opts_enable_tcp_keepalive() {
+        assert!(SocketOpts::for_data_channel().keepalive.is_some());
     }
 }

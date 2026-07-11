@@ -13,6 +13,17 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration, Instant};
 use tracing::{debug, error};
 
+/// ClientEndpoint intentionally has no PartialEq (see common/build.rs);
+/// its deterministic prost encoding stands in for config equality.
+fn encode_client_config(endpoint: &ServerEndpoint) -> Vec<u8> {
+    use cloudpub_common::prost::Message as ProstMessage;
+    endpoint
+        .client
+        .as_ref()
+        .map(|c| c.encode_to_vec())
+        .unwrap_or_default()
+}
+
 #[async_trait]
 pub trait Plugin: Send + Sync {
     /// Name of the plugin
@@ -39,6 +50,9 @@ pub trait Plugin: Send + Sync {
 
 pub struct PluginHandle {
     guid: String,
+    /// prost-encoded ClientEndpoint this handle was spawned for, used to
+    /// recognize duplicate EndpointStart deliveries for the same config
+    client_config: Vec<u8>,
     server: Arc<RwLock<Option<SubProcess>>>,
     cancel_tx: mpsc::Sender<Message>,
     task: JoinHandle<()>,
@@ -53,6 +67,7 @@ impl PluginHandle {
         to_server_tx: FairSender<Message>,
     ) -> Self {
         let guid = endpoint.guid.clone();
+        let client_config = encode_client_config(&endpoint);
         let guid_for_task = guid.clone();
         let server = Arc::new(RwLock::new(None));
         let server_task = server.clone();
@@ -169,9 +184,31 @@ impl PluginHandle {
 
         Self {
             guid,
+            client_config,
             server,
             cancel_tx,
             task,
+        }
+    }
+
+    /// True when this handle already serves exactly this endpoint
+    /// configuration: a duplicate EndpointStart (the server re-sends them
+    /// after every EndpointStartAll and on repeated registrations) must
+    /// not bounce a running publication.
+    pub fn same_config(&self, endpoint: &ServerEndpoint) -> bool {
+        self.client_config == encode_client_config(endpoint)
+    }
+
+    /// The publication is being set up or its subprocess is alive. A
+    /// finished task with no healthy subprocess means setup failed or the
+    /// server died - a fresh spawn is warranted then.
+    pub fn is_healthy(&self) -> bool {
+        if !self.task.is_finished() {
+            return true;
+        }
+        match self.server.read().as_ref() {
+            Some(process) => process.result.read().is_ok(),
+            None => false,
         }
     }
 

@@ -179,9 +179,12 @@ impl Transport for TcpTransport {
     }
 
     async fn connect(&self, addr: &AddrMaybeCached) -> Result<Self::Stream> {
-        let s = tcp_connect_with_proxy(addr, self.cfg.proxy.as_ref()).await?;
-        self.socket_opts.apply(&s);
-        Ok(TcpStream::new(s))
+        super::with_connect_deadline(self.cfg.connect_timeout_secs, "TCP connect", async {
+            let s = tcp_connect_with_proxy(addr, self.cfg.proxy.as_ref()).await?;
+            self.socket_opts.apply(&s);
+            Ok(TcpStream::new(s))
+        })
+        .await
     }
 }
 

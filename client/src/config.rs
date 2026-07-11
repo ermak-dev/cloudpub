@@ -260,7 +260,9 @@ impl Default for ClientConfig {
             agent_id: Uuid::new_v4().to_string(),
             hwid: None,
             config_path: PathBuf::new(),
-            server: format!("https://{}:{}", DOMAIN, PORT).parse().unwrap(),
+            server: format!("https://{}:{}", DOMAIN.as_str(), *PORT)
+                .parse()
+                .unwrap(),
             token: None,
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT_SECS,
             one_c_home: None,

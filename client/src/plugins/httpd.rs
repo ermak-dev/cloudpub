@@ -69,6 +69,12 @@ pub const HTTPD_EXE: &str = "httpd.exe";
 #[cfg(unix)]
 pub const HTTPD_EXE: &str = "httpd";
 
+/// The 1C and WebDAV plugins install Apache into the same cache directory.
+/// Concurrent setups (both plugins publishing on a cold cache, or duplicate
+/// endpoint starts) would unpack over each other and over a running httpd;
+/// serialize them and re-check the completion marker under the lock.
+static HTTPD_SETUP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub async fn setup_httpd(
     config: &Arc<RwLock<ClientConfig>>,
     command_rx: &mut mpsc::Receiver<Message>,
@@ -80,6 +86,8 @@ pub async fn setup_httpd(
 
     let mut touch = httpd_dir.clone();
     touch.push("installed.txt");
+
+    let _setup_guard = HTTPD_SETUP_LOCK.lock().await;
 
     if touch.exists() {
         return Ok(());

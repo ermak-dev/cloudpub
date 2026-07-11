@@ -1,3 +1,4 @@
+use crate::constants::DEFAULT_CONNECT_TIMEOUT_SECS;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
@@ -73,9 +74,26 @@ impl Default for WebsocketConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct TcpConfig {
     pub proxy: Option<Url>,
+    /// Deadline for the whole dial: TCP connect, TLS handshake and the
+    /// WebSocket upgrade. 0 disables it.
+    #[serde(default = "default_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+}
+
+fn default_connect_timeout_secs() -> u64 {
+    DEFAULT_CONNECT_TIMEOUT_SECS
+}
+
+impl Default for TcpConfig {
+    fn default() -> Self {
+        Self {
+            proxy: None,
+            connect_timeout_secs: default_connect_timeout_secs(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]

@@ -327,14 +327,32 @@ impl<T: 'static + Transport> Client<T> {
                                                 .try_into()
                                                 .unwrap_or(Protocol::Tcp);
                                             if let Some(plugin) = PluginRegistry::new().get(protocol) {
-                                                let handle = PluginHandle::spawn(
-                                                    plugin,
-                                                    endpoint.clone(),
-                                                    config,
-                                                    opts,
-                                                    to_server_tx,
-                                                );
-                                                self.plugin_processes.insert(endpoint.guid.clone(), handle);
+                                                // Duplicate EndpointStart for a publication this
+                                                // client already serves (the server re-sends them
+                                                // after EndpointStartAll and on repeated
+                                                // registrations): replacing the handle would kill
+                                                // the running subprocess mid-flight.
+                                                let already_running = self
+                                                    .plugin_processes
+                                                    .get(&endpoint.guid)
+                                                    .map(|h| h.same_config(&endpoint) && h.is_healthy())
+                                                    .unwrap_or(false);
+                                                if already_running {
+                                                    debug!(
+                                                        "Endpoint {} already running with the same config, \
+                                                         ignoring duplicate start",
+                                                        endpoint.guid
+                                                    );
+                                                } else {
+                                                    let handle = PluginHandle::spawn(
+                                                        plugin,
+                                                        endpoint.clone(),
+                                                        config,
+                                                        opts,
+                                                        to_server_tx,
+                                                    );
+                                                    self.plugin_processes.insert(endpoint.guid.clone(), handle);
+                                                }
                                             } else {
                                                 endpoint.status = Some("online".into());
                                                 let _ = to_server_tx.send(Message::EndpointStatus(endpoint.clone())).await;

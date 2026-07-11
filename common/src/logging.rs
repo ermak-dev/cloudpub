@@ -29,7 +29,7 @@ pub fn init_log(
         std::env::var("RUST_LOG").unwrap_or_default()
     );
 
-    let timer = time::format_description::parse(
+    let timer = time::format_description::parse_borrowed::<2>(
         "[year]-[month padding:zero]-[day padding:zero] [hour]:[minute]:[second]",
     )
     .context("Failed to parse time format")?;

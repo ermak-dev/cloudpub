@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Frontend Theme Colors</title>
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --text: #1C252E;
+    --muted: #637381;
+    --border: #DFE3E8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px;
+  }
+  h1 { font-size: 24px; margin: 0 0 8px; }
+  .subtitle { color: var(--muted); margin: 0 0 32px; font-size: 14px; }
+  h2 {
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 32px 0 12px;
+  }
+  .group {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .swatch {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .chip {
+    height: 80px;
+    display: flex;
+    align-items: flex-end;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  }
+  .meta {
+    padding: 8px 12px;
+    background: #FCFDFD;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+  }
+  .meta b { color: var(--text); font-weight: 600; }
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .panel.dark { background: #141A21; color: #FFFFFF; border-color: #1C252E; }
+  .panel h3 { margin: 0 0 8px; font-size: 14px; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
+  .dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.1);
+    flex-shrink: 0;
+  }
+  .dark .dot { border-color: rgba(255,255,255,0.2); }
+</style>
+</head>
+<body>
+
+<h1>Frontend Theme Colors</h1>
+<p class="subtitle">Default palette from <code>frontend/src/theme/core/colors.json</code></p>
+
+<h2>Primary</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#C8FAD6;color:#004B50">lighter</div><div class="meta"><b>lighter</b><span>#C8FAD6</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#5BE49B;color:#004B50">light</div><div class="meta"><b>light</b><span>#5BE49B</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#00A76F;color:#FFFFFF">main</div><div class="meta"><b>main</b><span>#00A76F</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#007867;color:#FFFFFF">dark</div><div class="meta"><b>dark</b><span>#007867</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#004B50;color:#FFFFFF">darker</div><div class="meta"><b>darker</b><span>#004B50</span></div></div>
+</div>
+
+<h2>Secondary</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#EFD6FF;color:#27097A">lighter</div><div class="meta"><b>lighter</b><span>#EFD6FF</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#C684FF;color:#27097A">light</div><div class="meta"><b>light</b><span>#C684FF</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#8E33FF;color:#FFFFFF">main</div><div class="meta"><b>main</b><span>#8E33FF</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#5119B7;color:#FFFFFF">dark</div><div class="meta"><b>dark</b><span>#5119B7</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#27097A;color:#FFFFFF">darker</div><div class="meta"><b>darker</b><span>#27097A</span></div></div>
+</div>
+
+<h2>Info</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#CAFDF5;color:#003768">lighter</div><div class="meta"><b>lighter</b><span>#CAFDF5</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#61F3F3;color:#003768">light</div><div class="meta"><b>light</b><span>#61F3F3</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#00B8D9;color:#FFFFFF">main</div><div class="meta"><b>main</b><span>#00B8D9</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#006C9C;color:#FFFFFF">dark</div><div class="meta"><b>dark</b><span>#006C9C</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#003768;color:#FFFFFF">darker</div><div class="meta"><b>darker</b><span>#003768</span></div></div>
+</div>
+
+<h2>Success</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#D3FCD2;color:#065E49">lighter</div><div class="meta"><b>lighter</b><span>#D3FCD2</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#77ED8B;color:#065E49">light</div><div class="meta"><b>light</b><span>#77ED8B</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#22C55E;color:#FFFFFF">main</div><div class="meta"><b>main</b><span>#22C55E</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#118D57;color:#FFFFFF">dark</div><div class="meta"><b>dark</b><span>#118D57</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#065E49;color:#FFFFFF">darker</div><div class="meta"><b>darker</b><span>#065E49</span></div></div>
+</div>
+
+<h2>Warning</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#FFF5CC;color:#7A4100">lighter</div><div class="meta"><b>lighter</b><span>#FFF5CC</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#FFD666;color:#7A4100">light</div><div class="meta"><b>light</b><span>#FFD666</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#FFAB00;color:#1C252E">main</div><div class="meta"><b>main</b><span>#FFAB00</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#B76E00;color:#FFFFFF">dark</div><div class="meta"><b>dark</b><span>#B76E00</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#7A4100;color:#FFFFFF">darker</div><div class="meta"><b>darker</b><span>#7A4100</span></div></div>
+</div>
+
+<h2>Error</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#FFE9D5;color:#7A0916">lighter</div><div class="meta"><b>lighter</b><span>#FFE9D5</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#FFAC82;color:#7A0916">light</div><div class="meta"><b>light</b><span>#FFAC82</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#FF5630;color:#FFFFFF">main</div><div class="meta"><b>main</b><span>#FF5630</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#B71D18;color:#FFFFFF">dark</div><div class="meta"><b>dark</b><span>#B71D18</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#7A0916;color:#FFFFFF">darker</div><div class="meta"><b>darker</b><span>#7A0916</span></div></div>
+</div>
+
+<h2>Grey</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#FCFDFD;color:#1C252E">50</div><div class="meta"><b>50</b><span>#FCFDFD</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#F9FAFB;color:#1C252E">100</div><div class="meta"><b>100</b><span>#F9FAFB</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#F4F6F8;color:#1C252E">200</div><div class="meta"><b>200</b><span>#F4F6F8</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#DFE3E8;color:#1C252E">300</div><div class="meta"><b>300</b><span>#DFE3E8</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#C4CDD5;color:#1C252E">400</div><div class="meta"><b>400</b><span>#C4CDD5</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#919EAB;color:#FFFFFF">500</div><div class="meta"><b>500</b><span>#919EAB</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#637381;color:#FFFFFF">600</div><div class="meta"><b>600</b><span>#637381</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#454F5B;color:#FFFFFF">700</div><div class="meta"><b>700</b><span>#454F5B</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#1C252E;color:#FFFFFF">800</div><div class="meta"><b>800</b><span>#1C252E</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#141A21;color:#FFFFFF">900</div><div class="meta"><b>900</b><span>#141A21</span></div></div>
+</div>
+
+<h2>Common</h2>
+<div class="group">
+  <div class="swatch"><div class="chip" style="background:#FFFFFF;color:#1C252E;border-bottom:1px solid #DFE3E8">white</div><div class="meta"><b>white</b><span>#FFFFFF</span></div></div>
+  <div class="swatch"><div class="chip" style="background:#000000;color:#FFFFFF">black</div><div class="meta"><b>black</b><span>#000000</span></div></div>
+</div>
+
+<h2>Text &amp; Background</h2>
+<div class="pair">
+  <div class="panel">
+    <h3>Light mode</h3>
+    <div class="row"><span class="dot" style="background:#FFFFFF"></span>background.default <b style="margin-left:auto">#FFFFFF</b></div>
+    <div class="row"><span class="dot" style="background:#FFFFFF"></span>background.paper <b style="margin-left:auto">#FFFFFF</b></div>
+    <div class="row"><span class="dot" style="background:#F4F6F8"></span>background.neutral <b style="margin-left:auto">#F4F6F8</b></div>
+    <div class="row"><span class="dot" style="background:#1C252E"></span>text.primary <b style="margin-left:auto">#1C252E</b></div>
+    <div class="row"><span class="dot" style="background:#637381"></span>text.secondary <b style="margin-left:auto">#637381</b></div>
+    <div class="row"><span class="dot" style="background:#919EAB"></span>text.disabled <b style="margin-left:auto">#919EAB</b></div>
+  </div>
+  <div class="panel dark">
+    <h3>Dark mode</h3>
+    <div class="row"><span class="dot" style="background:#141A21"></span>background.default <b style="margin-left:auto">#141A21</b></div>
+    <div class="row"><span class="dot" style="background:#1C252E"></span>background.paper <b style="margin-left:auto">#1C252E</b></div>
+    <div class="row"><span class="dot" style="background:#28323D"></span>background.neutral <b style="margin-left:auto">#28323D</b></div>
+    <div class="row"><span class="dot" style="background:#FFFFFF"></span>text.primary <b style="margin-left:auto">#FFFFFF</b></div>
+    <div class="row"><span class="dot" style="background:#919EAB"></span>text.secondary <b style="margin-left:auto">#919EAB</b></div>
+    <div class="row"><span class="dot" style="background:#637381"></span>text.disabled <b style="margin-left:auto">#637381</b></div>
+  </div>
+</div>
+
+</body>
+</html>

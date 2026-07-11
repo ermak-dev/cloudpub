@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cloudpub_python_sdk"
-version = "3.0.2"
+version = "3.2.2"
 description = "Python bindings for CloudPub client"
 requires-python = ">=3.8"
 readme = "README.md"
@@ -25,7 +25,3 @@ classifiers = [
 
 [tool.maturin]
 module-name = "cloudpub_python_sdk"
-python-source = "."
-
-[tool.setuptools.package-data]
-cloudpub_python_sdk = ["example.py"]

@@ -36,7 +36,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+RUN curl --proto '=https' --tlsv1.2 -sSf --retry 5 --retry-all-errors --connect-timeout 20 https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
     && rustup --version \
     && cargo --version \
     && rustc --version
@@ -49,22 +49,23 @@ RUN rustup target add \
     aarch64-unknown-linux-musl \
     x86_64-pc-windows-gnu
 
-# Install Python packages including maturin
+# Install Python packages including maturin (pinned: new majors change
+# project layout validation and can break the build)
 RUN pip3 install --no-cache-dir --break-system-packages \
     --upgrade pip setuptools wheel \
-    maturin \
+    'maturin>=1.9,<2.0' \
     ziglang
 
 # Install cargo-zigbuild for cross-compilation
 RUN cargo install cargo-zigbuild
 
 # Install protoc
-RUN wget https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-linux-x86_64.zip \
+RUN wget --tries=5 --timeout=30 https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-linux-x86_64.zip \
     && unzip protoc-21.12-linux-x86_64.zip -d /usr/local \
     && rm protoc-21.12-linux-x86_64.zip
 
 # Install Zig for cross-compilation
-RUN wget https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
+RUN wget --tries=5 --timeout=30 https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
     && xz -d zig-linux-x86_64-0.13.0.tar.xz \
     && tar -xf zig-linux-x86_64-0.13.0.tar \
     && mv zig-linux-x86_64-0.13.0 /opt/zig \
@@ -77,24 +78,6 @@ ENV CARGO_ZIGBUILD_ZIG_PATH=/usr/local/bin/zig
 # Builder stage - builds all wheels
 ##########################################
 FROM base AS builder
-
-WORKDIR /workspace
-
-# Copy all source files
-COPY . /workspace/
-
-# Copy Python SDK specific files
-COPY sdk/python/Cargo.toml /workspace/sdk/python/
-COPY sdk/python/pyproject.toml /workspace/sdk/python/
-COPY sdk/python/src /workspace/sdk/python/src
-COPY sdk/python/*.py /workspace/sdk/python/
-
-# Copy dependencies
-COPY sdk/rust /workspace/sdk/rust
-COPY common /workspace/common
-COPY Cargo.toml /workspace/
-
-WORKDIR /workspace/sdk/python
 
 # Build arguments with default values
 ARG NEXT_PUBLIC_DOMAIN=cloudpub.ru
@@ -121,9 +104,26 @@ RUN mkdir -p /artifacts/wheels
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/usr/bin/x86_64-w64-mingw32-gcc
 ENV RUSTFLAGS_X86_64_PC_WINDOWS_GNU="-C target-feature=+crt-static -C link-arg=-Wl,--subsystem,console:6.01"
 
+# Copy sources last, after all the rarely-changing layers above.
+# Only the crates needed to load the cargo workspace and build the python
+# SDK: changes elsewhere in the repo (frontend, backend, docs, bin) must
+# not invalidate these layers.
+WORKDIR /workspace
+COPY Cargo.toml Cargo.lock /workspace/
+COPY common /workspace/common
+COPY client /workspace/client
+COPY server /workspace/server
+COPY tests /workspace/tests
+COPY gui /workspace/gui
+COPY sdk /workspace/sdk
+
+WORKDIR /workspace/sdk/python
+
+# Cache mounts must match CARGO_HOME=/usr/local/cargo (set in the base
+# stage), otherwise the whole crates registry is re-downloaded every build
 # Build Windows x86_64 wheel
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/target \
     maturin build --release \
         --target x86_64-pc-windows-gnu \
@@ -131,8 +131,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     && echo "Built Windows x86_64 wheel"
 
 # Build Linux x86_64 wheel
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/target \
     maturin build --release \
         --target x86_64-unknown-linux-gnu \
@@ -141,8 +141,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     && echo "Built Linux x86_64 wheel"
 
 # Build Linux aarch64 wheel
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/target \
     maturin build --release \
         --target aarch64-unknown-linux-gnu \

@@ -306,6 +306,7 @@ pub struct WebsocketTransport {
     sub: SubTransport,
     conf: WebSocketConfig,
     headers: Arc<DashMap<String, String>>,
+    connect_timeout_secs: u64,
 }
 
 #[async_trait]
@@ -320,7 +321,9 @@ impl Transport for WebsocketTransport {
             .as_ref()
             .ok_or_else(|| anyhow!("Missing websocket config"))?;
 
-        let conf = WebSocketConfig::default().write_buffer_size(0);
+        let conf = WebSocketConfig::default()
+            .write_buffer_size(0)
+            .read_buffer_size(crate::constants::WEBSOCKET_READ_BUFFER_SIZE);
 
         let sub = match wsconfig.tls {
             #[cfg(feature = "rustls")]
@@ -330,7 +333,12 @@ impl Transport for WebsocketTransport {
             false => SubTransport::Insecure(TcpTransport::new(config)?),
         };
         let headers = Arc::new(DashMap::new());
-        Ok(WebsocketTransport { sub, conf, headers })
+        Ok(WebsocketTransport {
+            sub,
+            conf,
+            headers,
+            connect_timeout_secs: config.tcp.connect_timeout_secs,
+        })
     }
 
     fn hint(conn: &Self::Stream, opt: SocketOpts) {
@@ -390,30 +398,38 @@ impl Transport for WebsocketTransport {
 
     async fn connect(&self, addr: &AddrMaybeCached) -> anyhow::Result<Self::Stream> {
         let u = format!("wss://{}/endpoint/v3", &addr.addr.as_str());
-        let tstream = match &self.sub {
-            SubTransport::Insecure(t) => {
-                TransportStream::Insecure(t.connect(addr).await?.into_stream())
-            }
-            #[cfg(feature = "rustls")]
-            SubTransport::Secure(t) => TransportStream::Secure(Box::new(t.connect(addr).await?)),
-        };
-        debug!("Connecting to {}", u);
-        let (wsstream, _) = client_async_with_config(
-            u.clone()
-                .into_client_request()
-                .context("Failed to create client request")?,
-            tstream,
-            Some(self.conf),
-        )
+        // Covers the nested TCP connect and TLS handshake too, so the whole
+        // dial is bounded by one deadline rather than by the sum of the
+        // per-step ones.
+        super::with_connect_deadline(self.connect_timeout_secs, "WebSocket connect", async {
+            let tstream = match &self.sub {
+                SubTransport::Insecure(t) => {
+                    TransportStream::Insecure(t.connect(addr).await?.into_stream())
+                }
+                #[cfg(feature = "rustls")]
+                SubTransport::Secure(t) => {
+                    TransportStream::Secure(Box::new(t.connect(addr).await?))
+                }
+            };
+            debug!("Connecting to {}", u);
+            let (wsstream, _) = client_async_with_config(
+                u.clone()
+                    .into_client_request()
+                    .context("Failed to create client request")?,
+                tstream,
+                Some(self.conf),
+            )
+            .await
+            .with_context(|| format!("Failed to connect to {}", u))?;
+
+            debug!("Connected");
+
+            let tun = WebsocketStream {
+                inner: StreamReader::new(StreamWrapper { inner: wsstream }),
+            };
+            Ok(tun)
+        })
         .await
-        .with_context(|| format!("Failed to connect to {}", u))?;
-
-        debug!("Connected");
-
-        let tun = WebsocketStream {
-            inner: StreamReader::new(StreamWrapper { inner: wsstream }),
-        };
-        Ok(tun)
     }
 
     fn get_header(&self, name: &str) -> Option<String> {

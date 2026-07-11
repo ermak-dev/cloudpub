@@ -7,6 +7,11 @@ slug: /docker
 
 # Образ Docker
 
+:::note
+Эта страница описывает Docker-образ **агента**. Развертывание собственного **сервера**
+CloudPub в Docker описано на странице [On-Premise сервер](/onprem).
+:::
+
 ## Использование CloudPub с Docker
 
 Вы можете использовать готовый [образ Docker](https://hub.docker.com/repository/docker/cloudpub/cloudpub/general) для агента CloudPub.

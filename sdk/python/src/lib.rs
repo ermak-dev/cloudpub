@@ -425,6 +425,7 @@ impl From<FilterRule> for protocol::FilterRule {
             action_value: r.action_value,
             action_type: r.action_type.into(),
             data: r.data,
+            ..Default::default()
         }
     }
 }
@@ -480,6 +481,9 @@ impl Connection {
     ///     config_path (str, опционально): Путь к файлу конфигурации
     ///     log_level (str, опционально): Уровень логирования (по умолчанию: "debug")
     ///     verbose (bool, опционально): Вывод лога в stderr (по умолчанию: False)
+    ///     init_logging (bool, опционально): Инициализировать логирование SDK
+    ///         (по умолчанию: True). Укажите False, если процесс уже настроил
+    ///         собственный tracing-подписчик; log_level и verbose при этом игнорируются
     ///     token (str, опционально): Токен аутентификации
     ///     email (str, опционально): Email для входа
     ///     password (str, опционально): Пароль для входа
@@ -487,11 +491,12 @@ impl Connection {
     /// Исключения:
     ///     AuthenticationError: Если аутентификация не удалась или не предоставлены учетные данные
     #[new]
-    #[pyo3(signature = (config_path=None, log_level="debug".to_string(), verbose=false, token=None, email=None, password=None))]
+    #[pyo3(signature = (config_path=None, log_level="debug".to_string(), verbose=false, init_logging=true, token=None, email=None, password=None))]
     fn new(
         config_path: Option<String>,
         log_level: String,
         verbose: bool,
+        init_logging: bool,
         token: Option<String>,
         email: Option<String>,
         password: Option<String>,
@@ -506,6 +511,7 @@ impl Connection {
         let mut builder = RustConnection::builder()
             .log_level(log_level)
             .verbose(verbose)
+            .init_logging(init_logging)
             .timeout_secs(30);
 
         if let Some(path) = path {

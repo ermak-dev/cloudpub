@@ -1,6 +1,6 @@
 [package]
 name = "cloudpub-sdk"
-version = "3.0.2"
+version = "3.2.2"
 edition = "2021"
 authors = ["CloudPub <support@cloudpub.ru>"]
 license = "Apache-2.0"
@@ -19,8 +19,11 @@ tracing.workspace = true
 fdlimit = "0.3"
 
 # Internal dependencies
-cloudpub-client = { version = "3.0.2", path = "../../client" }
-cloudpub-common = { version = "3.0.2", path = "../../common" }
+cloudpub-client = { version = "3.2.2", path = "../../client" }
+cloudpub-common = { version = "3.2.2", path = "../../common" }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
 
 [[example]]
 name = "example"

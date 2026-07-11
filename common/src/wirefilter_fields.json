@@ -1,0 +1,92 @@
+[
+  {
+    "characteristic": true,
+    "name": "ip.src",
+    "type": "Ip"
+  },
+  {
+    "characteristic": true,
+    "name": "ip.src.subnet24",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": true,
+    "name": "ip.src.subnet16",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": true,
+    "name": "ip.dst",
+    "type": "Ip"
+  },
+  {
+    "characteristic": true,
+    "name": "port.src",
+    "type": "Int"
+  },
+  {
+    "characteristic": true,
+    "name": "port.dst",
+    "type": "Int"
+  },
+  {
+    "characteristic": true,
+    "name": "protocol",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": true,
+    "name": "http.host",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": true,
+    "name": "http.path",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": true,
+    "name": "http.method",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": true,
+    "name": "http.user_agent",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": false,
+    "name": "http.referer",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": false,
+    "name": "http.cookie",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": false,
+    "name": "http.headers",
+    "type": "Map(Bytes)"
+  },
+  {
+    "characteristic": false,
+    "name": "geo.country",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": false,
+    "name": "geo.region",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": false,
+    "name": "geo.city",
+    "type": "Bytes"
+  },
+  {
+    "characteristic": false,
+    "name": "geo.code",
+    "type": "Bytes"
+  }
+]

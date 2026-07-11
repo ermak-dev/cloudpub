@@ -50,6 +50,7 @@ enum FilterAction {
   FILTER_DENY = 1;
   FILTER_REDIRECT = 2;
   FILTER_LOG = 3;
+  FILTER_RATE_LIMIT = 4;
 }
 
 enum ConnectState {
@@ -267,6 +268,14 @@ message FilterRule {
     optional string action_value = 2;
     FilterAction action_type = 3;
     string data = 4;
+    // Rate-limit fields (used when action_type == FILTER_RATE_LIMIT).
+    repeated string characteristics = 5;
+    optional uint32 period_seconds = 6;
+    optional uint32 requests_per_period = 7;
+    optional uint32 mitigation_timeout_seconds = 8;
+    optional uint32 max_concurrent = 9;
+    // FilterRule DB primary key; server-populated, the stable rate-limit key.
+    int64 id = 10;
 }
 
 message EndpointStopAll {

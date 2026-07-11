@@ -36,21 +36,38 @@ RUN     apt-get update && apt install -y gcc-mipsel-linux-gnu g++-mipsel-linux-g
 
 #       Install Android NDK for Android builds
 RUN     apt install -y wget unzip && \
-        wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O /tmp/ndk.zip && \
+        wget -q --tries=5 --timeout=30 https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O /tmp/ndk.zip && \
         unzip -q /tmp/ndk.zip -d /opt && \
         rm /tmp/ndk.zip && \
         chmod -R a+rx /opt/android-ndk-r26d
 ENV     ANDROID_NDK_HOME="/opt/android-ndk-r26d"
+#       cmake (>=3.20) locates the NDK via ANDROID_NDK_ROOT/ANDROID_NDK, not
+#       ANDROID_NDK_HOME; without these the libz-ng-sys build for the android
+#       target fails with "Neither the NDK nor a standalone toolchain was found"
+ENV     ANDROID_NDK_ROOT="/opt/android-ndk-r26d"
+ENV     ANDROID_NDK="/opt/android-ndk-r26d"
 ENV     PATH="$PATH:/opt/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+#       Install zig for cargo-zigbuild: lets the x86_64/i686 glibc builds pin
+#       the target glibc version (2.17) independently of this image's glibc
+RUN     apt install -y xz-utils && \
+        ZIG_VERSION=0.13.0 && \
+        wget -q --tries=5 --timeout=30 https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz -O /tmp/zig.tar.xz && \
+        tar -xf /tmp/zig.tar.xz -C /opt && rm /tmp/zig.tar.xz && \
+        ln -s /opt/zig-linux-x86_64-${ZIG_VERSION}/zig /usr/local/bin/zig
 
 USER    cloudpub:cloudpub
 
-RUN     cargo install cargo-chef
+# --locked pins each tool's own Cargo.lock: without it, cargo resolves newer
+# transitive deps that require a rustc newer than this image's (rust:1.88)
+RUN     cargo install cargo-chef --locked
+RUN     cargo install cargo-zigbuild --locked
 
 # Add MIPS target using nightly toolchain as it might have more targets
 RUN     rustup toolchain install nightly
 RUN     rustup target add --toolchain nightly mipsel-unknown-linux-gnu || true
 
+RUN     rustup target add i686-unknown-linux-gnu
 RUN     rustup target add arm-unknown-linux-musleabi
 RUN     rustup target add armv5te-unknown-linux-musleabi
 RUN     rustup target add aarch64-unknown-linux-musl
@@ -119,8 +136,12 @@ RUN     mkdir -p artifacts/win64 && \
         cp target/x86_64-pc-windows-gnu/minimal/clo.exe artifacts/win64/clo.exe
 
 RUN     mkdir -p artifacts/x86_64 && \
-        cargo build -p cloudpub-client --target x86_64-unknown-linux-gnu --profile minimal && \
+        cargo zigbuild -p cloudpub-client --target x86_64-unknown-linux-gnu.2.17 --profile minimal && \
         cp target/x86_64-unknown-linux-gnu/minimal/clo artifacts/x86_64/clo
+
+RUN     mkdir -p artifacts/i686 && \
+        cargo zigbuild -p cloudpub-client --target i686-unknown-linux-gnu.2.17 --profile minimal && \
+        cp target/i686-unknown-linux-gnu/minimal/clo artifacts/i686/clo
 
 RUN     mkdir -p artifacts/aarch64 && \
         cargo build -p cloudpub-client --target aarch64-unknown-linux-musl --profile minimal --no-default-features && \

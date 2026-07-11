@@ -1,16 +1,17 @@
 FROM            bitnami/minideb:bookworm
 
-COPY            artifacts/linux/x86_64/clo /clo
-COPY            client/entrypoint.sh /
-
+# Stable layers (user + apt) FIRST: the clo binary changes every build, and
+# with it on top these layers re-ran and re-pushed/re-pulled on every deploy.
 RUN             mkdir -p /home/cloudpub && \
                 adduser cloudpub --home /home/cloudpub --shell /bin/bash && \
-                chown -R cloudpub:cloudpub /home/cloudpub && \
-                chmod +x /entrypoint.sh
+                chown -R cloudpub:cloudpub /home/cloudpub
 
-RUN             apt update
+RUN             apt update && \
+                apt install -y libpcre3 libapr1 libaprutil1 && \
+                rm -rf /var/lib/apt/lists/*
 
-RUN             apt install -y libpcre3 libapr1 libaprutil1
+COPY            --chmod=755 client/entrypoint.sh /
+COPY            artifacts/linux/x86_64/clo /clo
 
 USER            cloudpub:cloudpub
 

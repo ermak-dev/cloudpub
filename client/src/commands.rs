@@ -387,6 +387,7 @@ impl TypedValueParser for RuleParser {
             action_value,
             action_type: action_type.into(),
             data,
+            ..Default::default()
         })
     }
 }

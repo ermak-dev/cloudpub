@@ -145,7 +145,7 @@ pub struct Connection {
     pub(crate) receiver_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) timeout: Arc<Mutex<Duration>>,
     pub(crate) check_signal_fn: Option<CheckSignalFn>,
-    pub(crate) _worker_guard: WorkerGuard,
+    pub(crate) _worker_guard: Option<WorkerGuard>,
     pub(crate) client_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -181,7 +181,7 @@ impl Connection {
         mut result_rx: mpsc::Receiver<Message>,
         timeout: Duration,
         check_signal_fn: Option<CheckSignalFn>,
-        worker_guard: WorkerGuard,
+        worker_guard: Option<WorkerGuard>,
         client_handle: Option<tokio::task::JoinHandle<()>>,
     ) -> Self {
         // Create broadcast channel for event changes with a reasonable buffer

@@ -23,6 +23,22 @@ pub const DEFAULT_KEEPALIVE_SECS: u64 = 20;
 pub const DEFAULT_KEEPALIVE_INTERVAL: u64 = 8;
 pub const MESSAGE_TIMEOUT_SECS: u64 = 60;
 
+/// Deadline for establishing a connection: TCP connect, TLS handshake and the
+/// WebSocket upgrade. None of those steps carry a protocol-level message, so
+/// `MESSAGE_TIMEOUT_SECS` does not cover them - without this a peer that
+/// accepts the connection and then goes silent parks the dial forever.
+pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// WebSocket read buffer chunk size (tungstenite `read_buffer_size`).
+///
+/// tungstenite's `FrameCodec::read_in` zero-fills its input buffer up to
+/// `len + read_buffer_size` on every read cycle (see frame/mod.rs `resize(.., 0)`).
+/// The 128 KiB default means each read memset-zeroes 128 KiB regardless of the
+/// actual payload - profiling the server showed this zero-fill at ~8% of the
+/// endpoint thread's CPU. 16 KiB caps the wasted zeroing while staying a
+/// reasonable per-syscall read chunk for bulk tunnel traffic.
+pub const WEBSOCKET_READ_BUFFER_SIZE: usize = 16 * 1024;
+
 // FIXME: Determine reasonable size
 /// UDP MTU. Currently far larger than necessary
 pub const UDP_BUFFER_SIZE: usize = 2048;
